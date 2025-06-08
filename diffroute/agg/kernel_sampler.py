@@ -15,7 +15,7 @@ class SubResolutionSampler():
             self.phi_k = self.down_pool
             self.phi_inv = self.down_sample
         else:
-            raise NotImplemetedError
+            raise NotImplementedError
 
         if dt == 1: 
             self.phi_k = lambda x:x
@@ -48,7 +48,7 @@ class SubResolutionSampler():
         
 class SubResolutionSamplerNew(nn.Module):
     def __init__(self, dt, out_mode="avg"):
-        super(SubResolutionSampler, self).__init__()
+        super().__init__()
         self.factor = int(1 / dt)
         self.dt = dt
         self.out_mode = out_mode
@@ -94,9 +94,9 @@ class SubResolutionSamplerNew(nn.Module):
 
 def test_subresolution_sampler(B=16, T=36, dt=0.25):
     kernel = torch.randn(B, T)
-    sampler_avg = SubResolutionSampler(dt, out_mode="avg")
-    sampler_avg_baseline = SubResolutionSamplerOld(dt, out_mode="avg")
-    out = sampler_avg.down_tri(kernel)
-    out_base = sampler_avg.down_tri(kernel)
-    assert torch.equal(out, out_base)
+    sampler_old = SubResolutionSampler(dt, out_mode="avg")
+    sampler_new = SubResolutionSamplerNew(dt, out_mode="avg")
+    out_old = sampler_old.down_tri(kernel)
+    out_new = sampler_new.down_tri(kernel)
+    assert torch.allclose(out_new, out_old)
     print("Test passed")
