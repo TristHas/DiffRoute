@@ -69,7 +69,9 @@ class RoutingIRFAggregator(nn.Module):
         """
         if not self.buffers_initialized: self.init_buffers(params.device)
         time_window = self.max_delay
-        irfs = self.irf_fn(params, time_window=time_window, dt=self.dt).squeeze() 
+        irfs = self.irf_fn(params, time_window=time_window, dt=self.dt).squeeze()
+        #irfs = torch.relu(irfs)
+        #irfs = irfs / irfs.sum(-1, keepdims=True)
         # Be careful here: unsqueezed yield bug, needs to be clarified
         time_window_expanded = irfs.shape[-1]
         assert time_window_expanded == self.max_delay * int( 1 / self.dt )
@@ -78,6 +80,7 @@ class RoutingIRFAggregator(nn.Module):
                                         irfs_freq,
                                         cascade=self.cascade)
         irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
+        irfs_agg = torch.relu(irfs_agg)
         irfs_agg = self.sampler.phi_k(irfs_agg.flip(-1))
         irfs_agg /= irfs_agg.sum(-1, keepdims=True) #.detach()
         return BlockSparseTensor.from_coo(self.coords, irfs_agg, 
