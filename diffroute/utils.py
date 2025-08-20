@@ -3,7 +3,21 @@ import pandas as pd
 import numpy as np
 import networkx as nx
 from tqdm import tqdm_notebook as tqdm
-    
+
+IRF_PARAMS = {
+        "pure_lag":["delay"],
+        "linear_storage":["tau"],
+        "nash_cascade":["tau"],
+        "muskingum":["x", "k"],
+        "hayami":["D", "L", "c"]
+}
+
+def read_params(g, model_name, nodes_idx=None):
+    nodes_idx = get_node_idxs(g) if nodes_idx is None else nodes_idx
+    p_name = IRF_PARAMS[model_name]
+    params = torch.tensor([[g.nodes[n][p] for p in p_name] for n in get_node_idxs(g).index])
+    return params
+
 def find_roots(g):
     out = pd.Series(dict(g.out_degree))
     return out[out==0].index
