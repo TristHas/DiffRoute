@@ -1,8 +1,9 @@
+import torch
 import pandas as pd
 import numpy as np
 import networkx as nx
 from tqdm import tqdm_notebook as tqdm
-
+    
 def find_roots(g):
     out = pd.Series(dict(g.out_degree))
     return out[out==0].index
@@ -50,7 +51,6 @@ def upstream_path_stats_w_breakpoints(G, threshold=10**9):
                 count_paths[v] += count_paths[u] 
                 sum_lengths[v] += sum_lengths[u] + count_paths[u]
                 sum_all_lengths[v] += sum_all_lengths[u] + sum_lengths[u]
-    sum_all_lengths[u] += sum_lengths[u]
     return max_length, count_paths, sum_lengths, sum_all_lengths
 
 def annotate_downstream_path_stats(g, include_self=True):
