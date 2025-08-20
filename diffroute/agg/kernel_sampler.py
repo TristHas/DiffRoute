@@ -28,15 +28,15 @@ class SubResolutionSampler():
         return x.repeat_interleave(self.factor, -1) * self.dt
 
     def down_pool(self, x):
-        return F.avg_pool1d(x, kernel_size=self.factor, stride=self.factor)
+        return F.avg_pool1d(x, kernel_size=self.factor, stride=self.factor) * self.factor
 
     def down_sample(self, x):
-        return x[..., self.factor-1::self.factor]
+        return x[..., self.factor-1::self.factor]  * self.factor
 
     def down_tri(self, kernel):
         u = torch.arange(-self.factor+1, self.factor, dtype=kernel.dtype, device=kernel.device)
         tri_weights = (self.factor - u.abs()).float()  # shape [2*factor-1]
-        tri_weights = tri_weights / (self.factor**2)
+        tri_weights = tri_weights / (self.factor) #**2)
         pad = self.factor - 1
 
         kernel = kernel.unsqueeze(1)
