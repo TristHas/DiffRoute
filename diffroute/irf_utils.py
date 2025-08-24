@@ -1,4 +1,8 @@
 import torch 
+from .irfs import IRF_FN
+    
+def register_irf(name, func):
+    IRF_FN[name]=func
 
 def downsample_irf(kernel: torch.Tensor, dt: float) -> torch.Tensor:
     """
