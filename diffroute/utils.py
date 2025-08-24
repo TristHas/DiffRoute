@@ -82,25 +82,6 @@ def annotate_downstream_path_stats(g, include_self=True):
             g.nodes[u]["sum_lengths"] += update + g.nodes[v]["sum_lengths"] \
                                                 + g.nodes[v]["count_paths"]
             
-def downstream_path_stats(g, include_self=True):
-    """
-    """
-    init = 1 if include_self else 0
-    update = 0 if include_self else 1
-    count_paths = {node: init for node in g.nodes()}
-    sum_lengths = {node: init for node in g.nodes()}
-
-    topo_order = list(nx.topological_sort(g))
-    for u in reversed(topo_order):
-        for v in g.successors(u):
-            count_paths[u] += update + count_paths[v]
-            sum_lengths[u] += update + sum_lengths[v] + count_paths[v]
-            
-    # Convert to pandas Series for later cumulative-sum computations.
-    count_paths = pd.Series(count_paths).sort_index()
-    sum_lengths = pd.Series(sum_lengths).sort_index()
-    return count_paths, sum_lengths
-
 def downstream_path_stats_new_bug(g, node_idxs, include_self=True):
     """
     """
