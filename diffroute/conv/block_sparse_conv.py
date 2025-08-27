@@ -50,8 +50,10 @@ def conv1d_block_sparse(x, block_values, cols, rows):
     return y
 
 class BlockSparseCausalConv(nn.Module):
-    def __init__(self, bs_kernel=None, conv_imp="triton",
-                 block_m=None, block_n=64):
+    def __init__(self, bs_kernel=None, 
+                 conv_imp="triton",
+                 block_m=None, 
+                 block_n=64):
         super().__init__()
         self.bs_kernel = bs_kernel
         self.conv_imp = conv_imp
@@ -66,15 +68,16 @@ class BlockSparseCausalConv(nn.Module):
             y: Output tensor of shape (batch_size, n_channels, t)
         
         """
-        
         if w is None: w = self.bs_kernel
-        assert isinstance(w, BlockSparseTensor), "Kernel must be provided either at init or at forward"
+        assert (isinstance(w, BlockSparseTensor), 
+                "Kernel must be provided either at init or at forward")
         BLOCK_SIZE_M = w.block_size if self.block_m is None else self.block_m
         BLOCK_SIZE_N = self.block_n
         if self.conv_imp=="triton":
             return block_sparse_conv_1d_autograd(x, 
                                                  w.block_indices, 
                                                  w.block_values,
+                                                 w.size,
                                                  BLOCK_SIZE_M, 
                                                  BLOCK_SIZE_N)
         else:        
