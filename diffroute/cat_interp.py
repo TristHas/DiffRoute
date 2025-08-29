@@ -1,3 +1,5 @@
+from tqdm import tqdm
+
 import numpy as np
 import pandas as pd
 import torch
@@ -83,7 +85,7 @@ class DataFrameTh(nn.Module):
     def __init__(self, df):
         super().__init__()
         self.map_inp = pd.Series(np.arange(len(df.columns)), index=df.columns)
-        self.register_buffer("values", torch.from_numpy(df.values).to(device).t().contiguous())
+        self.register_buffer("values", torch.from_numpy(df.values).t().contiguous())
         
 class CI(nn.Module):
     def __init__(self, g, weight_df):
