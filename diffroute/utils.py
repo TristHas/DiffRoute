@@ -4,13 +4,7 @@ import numpy as np
 import networkx as nx
 from tqdm import tqdm_notebook as tqdm
 
-IRF_PARAMS = {
-        "pure_lag":["delay"],
-        "linear_storage":["tau"],
-        "nash_cascade":["tau"],
-        "muskingum":["x", "k"],
-        "hayami":["D", "L", "c"]
-}
+from .irfs import IRF_PARAMS
 
 def read_params(g, model_name, nodes_idx=None):
     nodes_idx = get_node_idxs(g) if nodes_idx is None else nodes_idx

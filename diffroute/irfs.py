@@ -82,9 +82,9 @@ IRF_FN = {
 }
 
 IRF_PARAMS = {
-        "pure_lag":1,
-        "linear_storage":1,
-        "nash_cascade":2,
-        "muskingum":2,
-        "hayami":3
+        "pure_lag":["delay"],
+        "linear_storage":["tau"],
+        "nash_cascade":["tau"],
+        "muskingum":["x", "k"],
+        "hayami":["D", "L", "c"]
 }
