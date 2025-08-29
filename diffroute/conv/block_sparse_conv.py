@@ -69,8 +69,7 @@ class BlockSparseCausalConv(nn.Module):
         
         """
         if w is None: w = self.bs_kernel
-        assert (isinstance(w, BlockSparseTensor), 
-                "Kernel must be provided either at init or at forward")
+        assert isinstance(w, BlockSparseTensor), "Kernel must be provided either at init or at forward"
         BLOCK_SIZE_M = w.block_size if self.block_m is None else self.block_m
         BLOCK_SIZE_N = self.block_n
         if self.conv_imp=="triton":
