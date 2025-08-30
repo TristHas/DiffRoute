@@ -66,7 +66,7 @@ def aggregate(vals, weight, idx, row_id, M, inverse, p_in, c_out_unique):
     N, F = vals.shape
     contrib = vals[row_id] * weight.unsqueeze(1)                                        
     contrib_s   = contrib[idx]
-    out = torch.zeros(M, F, dtype=vals.dtype, device=device)
+    out = torch.zeros(M, F, dtype=vals.dtype, device=inverse.device)
     out.scatter_add_(0, inverse.unsqueeze(1).expand(-1, F), contrib_s)
     return out
 
