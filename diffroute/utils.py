@@ -1,124 +1,90 @@
-import torch
+from tqdm import tqdm_notebook as tqdm
 import pandas as pd
 import numpy as np
 import networkx as nx
-from tqdm import tqdm_notebook as tqdm
 
-from .irfs import IRF_PARAMS
+import torch
+import torch.nn as nn
 
-def read_params(g, model_name, nodes_idx=None):
-    nodes_idx = get_node_idxs(g) if nodes_idx is None else nodes_idx
-    p_name = IRF_PARAMS[model_name]
-    params = torch.tensor([[g.nodes[n][p] for p in p_name] for n in get_node_idxs(g).index])
-    return params
+from diffroute.agg.index_precompute import init_pre_indices
+from diffroute.irfs import IRF_PARAMS
 
 def find_roots(g):
     out = pd.Series(dict(g.out_degree))
     return out[out==0].index
 
-def get_node_idxs(g):
+def init_node_idxs(g):
+    """ """
     dfs_order = np.fromiter(nx.dfs_preorder_nodes(g), dtype=int)
     return pd.Series(np.arange(len(dfs_order)), index=dfs_order)
 
-def get_node_idxs_old(g):
-    """
-        Order nodes in depth-first fashion
-    """
-    dfs_order = [int(x) for x in nx.dfs_preorder_nodes(g)]
-    return pd.Series(np.arange(len(dfs_order)), index=dfs_order)
+def get_node_idxs(g):
+    """ """
+    if hasattr(g, "nodes_idx"): return g.nodes_idx
+    else: return init_node_idxs(g)
 
-def get_node_idxs_correct_slow(g):
-    roots = find_roots(g)
-    g_ = g.reverse()
-    x = [np.fromiter(nx.dfs_preorder_nodes(g_, root), dtype=int) for root in roots]
-    x = np.concatenate(x)
-    return pd.Series(np.arange(len(x)), index=x)
+def init_params_from_g(g, model_name, nodes_idx=None):
+    """ """
+    nodes_idx = get_node_idxs(g) if nodes_idx is None else nodes_idx
+    p_name = IRF_PARAMS[model_name]
+    params = torch.tensor([[g.nodes[n][p] for p in p_name] for n in get_node_idxs(g).index])
+    return params.float()
 
-def upstream_path_stats_w_breakpoints(G, threshold=10**9):
-    """
-    """
-    topo_order = list(nx.topological_sort(G))
-    count_paths     = {node: 1 for node in G.nodes()}
-    max_length      = {node: 1 for node in G.nodes()}
-    sum_lengths     = {node: 1 for node in G.nodes()}
-    sum_all_lengths = {node: 0 for node in G.nodes()}
-    for node in G.nodes(): G.nodes[node]['breakpoint'] = False
+def init_params_from_df(param_df, model_name, nodes_idx=None):
+    """ """
+    p_name = IRF_PARAMS[model_name]
+    params = torch.from_numpy(param_df.loc[nodes_idx.index, p_name].values)
+    return params.float()
+
+def read_params(g, model_name, nodes_idx):
+    """ """
+    if hasattr(g, "params"): return g.garams
+    else: return init_params(g, model_name, nodes_idx)
+
+class RivTree(nn.Module):
+    def __init__(self, g, 
+                 irf_fn=None, 
+                 include_index_diag=True,
+                 param_df=None):
+        """ """
+        super().__init__()
+        self.g = g
+        self.nodes_idx = init_node_idxs(g)
+        self.include_index_diag = include_index_diag
+        self.irf_fn = irf_fn
         
-    for u in tqdm(topo_order, desc="Computing breakpoints"):
-        for v in G.successors(u):
-            candidate = sum_all_lengths[v] + (sum_all_lengths[u] + sum_lengths[u])
-            if candidate > threshold:
-                G.nodes[u]['breakpoint'] = True
-                max_length[v]      = 1
-                count_paths[v]     = 1
-                sum_lengths[v]     = 1
-                sum_all_lengths[v] = 0
-                sum_all_lengths[u] += sum_lengths[u]
-            else:
-                max_length[v] = max(max_length[v], max_length[u] + 1)
-                count_paths[v] += count_paths[u] 
-                sum_lengths[v] += sum_lengths[u] + count_paths[u]
-                sum_all_lengths[v] += sum_all_lengths[u] + sum_lengths[u]
-    return max_length, count_paths, sum_lengths, sum_all_lengths
+        edges, path_cumsum, _ = init_pre_indices(g, self.nodes_idx, 
+                                                 include_self=include_index_diag)
 
-def annotate_downstream_path_stats(g, include_self=True):
-    """
-    """
-    init = 1 if include_self else 0
-    update = 0 if include_self else 1
-    for n in g.nodes: g.nodes[n]["count_paths"]=init
-    for n in g.nodes: g.nodes[n]["sum_lengths"]=init
+        self.register_buffer("edges", edges)
+        self.register_buffer("path_cumsum", path_cumsum)
+        self.init_params(param_df)
+        
 
-    topo_order = list(nx.topological_sort(g))
-    for u in reversed(topo_order):
-        for v in g.successors(u):
-            g.nodes[u]["count_paths"] += update + g.nodes[v]["count_paths"] 
-            g.nodes[u]["sum_lengths"] += update + g.nodes[v]["sum_lengths"] \
-                                                + g.nodes[v]["count_paths"]
-            
-def downstream_path_stats_new_bug(g, node_idxs, include_self=True):
-    """
-    """
-    init = 1 if include_self else 0
-    update = 0 if include_self else 1
-    count_paths = np.zeros(len(node_idxs), dtype=int)
-    sum_lengths = np.zeros(len(node_idxs), dtype=int)
-    node_idxs = node_idxs.to_dict()
-    topo_order = np.fromiter(nx.topological_sort(g), dtype=int)
-    for u in topo_order[::-1]:
-        u_ = node_idxs[u]
-        for v in g.successors(u):
-            v_ = node_idxs[v]
-            count_paths[u_] += update + count_paths[v_]
-            sum_lengths[u_] += update + sum_lengths[v_] + count_paths[v_]
-    return count_paths, sum_lengths
+    def init_params(self, param_df):
+        """ """
+        if self.irf_fn is None: return
+        params = init_params_from_g(g, self.irf_fn, self.nodes_idx) if param_df is None else \
+                 init_params_from_df(param_df, self.irf_fn, self.nodes_idx)
+        self.register_buffer("params", params)
 
-def compute_kernel(g, delays, nodes_idx=None):
-    """
-    """
-    aggregator = RoutingDelayAggregator(g, nodes_idx=nodes_idx)
-    return aggregator.aggregate_discrete_delays(delays).to_dense()
+class RivTreeCluster(nn.Module):
+    def __init__(self, clusters_g, node_transfer, 
+                 irf_fn=None, 
+                 include_index_diag=True,
+                 param_df=None):
+        super().__init__()
+        self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
+                                         include_index_diag=include_index_diag,
+                                         param_df=param_df) \
+                                 for g in tqdm(clusters_g)])
+        self.node_transfer = node_transfer
 
-def run_routing(g, delays, runoffs, device="cuda:0"):
-    """
-        Attrs:
-            g
-            delays
-            runoffs
-        Output:
-            y
-    """
-    # Take care of ordering
-    node_idxs = get_node_idxs()
-    inputs = torch.from_numpy(runoffs[node_idxs.index].values.T).to(device)
-    delays = torch.from_numpy(delays[node_idxs.index].values).to(device)
-    
-    with torch.no_grad():
-        router = LinearRouter(g, delays)
-        output = router(inputs[None]).squeeze().cpu().numpy()
-    
-    output = pd.DataFrame(output[node_idxs[runoffs.columns]].T, 
-                          columns=inputs.columns, 
-                          index=inputs.index)
-    
-    return output
+    def __len__(self):
+        return len(self.gs)
+
+    def __iter__(self):
+        return iter(self.gs) 
+
+    def __getitem__(self, idx):
+        return self.gs[idx]

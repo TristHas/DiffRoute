@@ -3,11 +3,9 @@ import pandas as pd
 import networkx as nx
 import torch
 
-from ..utils import get_node_idxs
-
 def init_pre_indices(g: nx.DiGraph,
-                         node_idxs: pd.Series | None = None,
-                         include_self: bool = False):
+                     node_idxs: pd.Series,
+                     include_self: bool = False):
     """
     Parameters
     ----------
@@ -27,7 +25,6 @@ def init_pre_indices(g: nx.DiGraph,
     path_cumsum  : torch.IntTensor  (shape = [n])
     length_cumsum: torch.IntTensor  (shape = [n])
     """
-    if node_idxs is None: node_idxs = get_node_idxs(g)
     n = len(node_idxs)
     edges_np = np.full(n, -1, dtype=np.int32)
     src_labels, dst_labels = zip(*g.edges)

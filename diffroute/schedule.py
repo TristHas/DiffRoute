@@ -1,13 +1,38 @@
 from collections import defaultdict
+from tqdm.notebook import tqdm
+
 import pandas as pd
 import networkx as nx
-from tqdm.notebook import tqdm
-from diffroute.utils import (
-    get_node_idxs, 
-    annotate_downstream_path_stats, 
-    upstream_path_stats_w_breakpoints
-)
 
+from diffroute.utils import get_node_idxs
+
+def upstream_path_stats_w_breakpoints(G, threshold=10**9):
+    """
+    """
+    topo_order = list(nx.topological_sort(G))
+    count_paths     = {node: 1 for node in G.nodes()}
+    max_length      = {node: 1 for node in G.nodes()}
+    sum_lengths     = {node: 1 for node in G.nodes()}
+    sum_all_lengths = {node: 0 for node in G.nodes()}
+    for node in G.nodes(): G.nodes[node]['breakpoint'] = False
+        
+    for u in tqdm(topo_order, desc="Computing breakpoints"):
+        for v in G.successors(u):
+            candidate = sum_all_lengths[v] + (sum_all_lengths[u] + sum_lengths[u])
+            if candidate > threshold:
+                G.nodes[u]['breakpoint'] = True
+                max_length[v]      = 1
+                count_paths[v]     = 1
+                sum_lengths[v]     = 1
+                sum_all_lengths[v] = 0
+                sum_all_lengths[u] += sum_lengths[u]
+            else:
+                max_length[v] = max(max_length[v], max_length[u] + 1)
+                count_paths[v] += count_paths[u] 
+                sum_lengths[v] += sum_lengths[u] + count_paths[u]
+                sum_all_lengths[v] += sum_all_lengths[u] + sum_lengths[u]
+    return max_length, count_paths, sum_lengths, sum_all_lengths
+    
 def segment_graph_by_breakpoints(G, add_edge=False):
     """
     """
@@ -169,6 +194,6 @@ def define_schedule(G, plength_thr=10**5, node_thr=10**4, runoff_to_output=False
     print("#### Grouping subgraphs to cluster and infering dependencies ... ####")
     clusters_g, node_transfer = group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, 
                                                                    edges, subgraph_weights, thr=node_thr)
-    print("#### Cluster Annotations ... ####")
-    for g in clusters_g: annotate_downstream_path_stats(g, include_self=not runoff_to_output)
+    #print("#### Cluster Annotations ... ####")
+    #for g in clusters_g: annotate_downstream_path_stats(g, include_self=not runoff_to_output)
     return clusters_g, node_transfer

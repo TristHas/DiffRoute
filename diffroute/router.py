@@ -3,36 +3,46 @@ from .agg import RoutingIRFAggregator
 from .conv import BlockSparseCausalConv
 
 class LTIRouter(nn.Module):
-    def __init__(self, g, nodes_idx=None, 
+    def __init__(self,
                  max_delay=100, 
                  block_size=16,
                  irf_fn="linear_storage", 
-                 runoff_to_output=False,
                  dt=1, cascade=1,
                  sampling_mode="avg",
                  block_f=128,
                  **kwargs):
         """
             Args:
-                
-            
         """
         super().__init__()
-        self.residual = runoff_to_output
-        self.aggregator = RoutingIRFAggregator(g, nodes_idx=nodes_idx,
-                                               max_delay=max_delay, 
+        self.residual = not g.include_index_diag
+        self.aggregator = RoutingIRFAggregator(max_delay=max_delay, 
                                                block_size=block_size,
-                                               irf_fn=irf_fn, 
-                                               include_index_diag=not self.residual,
                                                dt=dt, cascade=cascade, 
                                                sampling_mode=sampling_mode,
                                                block_f=block_f)   
         self.conv = BlockSparseCausalConv()
         
-    def forward(self, x, params):
+    def forward(self, x, g):
         """
         """
-        kernel = self.aggregator(params)
+        kernel = self.aggregator(g)
         output = self.conv(x, kernel)
         if self.residual: output = x + output
+        return output
+
+class LTIRouter(nn.Module):
+    def __init__(self, aggregator, **kwargs):
+        """
+        """
+        super().__init__()
+        self.aggregator = aggregator
+        self.conv = BlockSparseCausalConv()
+        
+    def forward(self, x, g):
+        """
+        """
+        kernel = self.aggregator(g)
+        output = self.conv(x, kernel)
+        if not g.include_index_diag: output = x + output
         return output
