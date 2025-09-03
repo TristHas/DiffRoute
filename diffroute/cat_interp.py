@@ -1,4 +1,4 @@
-from tqdm import tqdm
+from tqdm.notebook import tqdm
 
 import numpy as np
 import pandas as pd
@@ -85,6 +85,7 @@ class DataFrameTh(nn.Module):
     def __init__(self, df):
         super().__init__()
         self.map_inp = pd.Series(np.arange(len(df.columns)), index=df.columns)
+        self.index   = pd.Series(np.arange(len(df.index)), index=df.index)
         self.register_buffer("values", torch.from_numpy(df.values).t().contiguous())
         
 class CI(nn.Module):
@@ -93,7 +94,7 @@ class CI(nn.Module):
         """
         super().__init__()
         map_out = get_node_idxs(g) 
-        weight_subset = weight_df.loc[map_out.index].copy()
+        weight_subset = weight_df.loc[map_out.index]#.copy()
         pix_idxs = weight_subset["pixel_idx"].unique()
         map_inp = pd.Series(np.arange(len(pix_idxs)), index=pix_idxs)
         self.n_cats = len(map_out)
@@ -135,15 +136,24 @@ class CatchmentInterpolator(nn.Module):
         self.weight_df["pixel_idx"].values[:] = self.runoff.map_inp.loc[weight_df["pixel_idx"]].values
         self.weight_df = self.weight_df.sort_values("river_id").set_index("river_id")
         self.cis = nn.ModuleList([CI(g, self.weight_df) for g in tqdm(gs)])
-            
+
+    def __len__(self):
+        return len(self.cis)
+
+    def __iter__(self):
+        return iter(self.cis) 
+
+    def __getitem__(self, idx):
+        return self.cis[idx]
+    
     def read_pixels(self, idx):
         return self.runoff.values[self.cis[idx].pix_idxs][None]
 
     def interpolate_runoff(self, idx):
-        return self.cis[idx].interpolate_runoff(self.runoff.values)
+        return self[idx].interpolate_runoff(self.runoff.values)
     
     def interpolate_kernel(self, idx, irfs_agg, coords):
-        return self.cis[idx].interpolate_kernel(irfs_agg, coords)
+        return self[idx].interpolate_kernel(irfs_agg, coords)
     
 class CatchmentInterpolatorOld:
     def __init__(self, gs, runoff, weight_df, device="cpu"):
