@@ -29,15 +29,16 @@ def _prefix_jump_kernel(prev_ptr, next_ptr,
     dst   = tl.load(jump_ptr + pid)
     valid = dst >= 0
     offs  = tl.arange(0, BLOCK_F)
+    
     for base in range(0, n_feat, BLOCK_F):
         m   = offs + base < n_feat
         acc = tl.load(prev_ptr + pid * n_feat + base + offs, mask=m, other=0.)
-        if valid:
-            add = tl.load(prev_ptr + dst * n_feat + base + offs, mask=m, other=0.)
-            acc += add
+        add = tl.load(prev_ptr + dst * n_feat + base + offs, mask=m & valid, other=0.)
+        acc += add
         tl.store(next_ptr + pid * n_feat + base + offs, acc, mask=m)
     # write 2-hop jump table
-    tl.store(edges_ptr + pid, tl.where(valid, tl.load(jump_ptr + dst), -1))
+    nxt = tl.load(jump_ptr + dst, mask=valid, other=-1)
+    tl.store(edges_ptr + pid, nxt)
 
 
 @triton.jit
@@ -74,7 +75,6 @@ def _prefix_jump_fwd(irf: torch.Tensor,
     irf   = irf.contiguous()
     edges = edges.contiguous()
     n, f  = irf.shape
-
     buf0  = irf.clone()
     buf1  = torch.empty_like(buf0)
     #print(irf.device, buf0.device)

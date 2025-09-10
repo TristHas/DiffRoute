@@ -2,19 +2,17 @@ import math, torch, triton, triton.language as tl
 from torch.autograd import Function
 
 @triton.jit
-def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
-                         prefix_ptr, edges_ptr, cumsum_ptr,
-                         n_nodes, n_feat,
+def _coo_enum_sum_kernel(coords_ptr, vals_ptr, 
+                         prefix_ptr, edges_ptr, cumsum_ptr, 
+                         n_nodes, 
+                         n_feat: tl.constexpr,
                          INCLUDE_SELF: tl.constexpr,
                          BLOCK_F: tl.constexpr):
     pid  = tl.program_id(0)  # start node
     if pid >= n_nodes: return
 
     # global write offset for this start node
-    base = tl.where(pid > 0,
-                    tl.load(cumsum_ptr + (pid - 1)),
-                    0)
-
+    base = tl.load(cumsum_ptr + (pid - 1), mask=(pid > 0), other=0)
     dest = tl.where(INCLUDE_SELF, pid, tl.load(edges_ptr + pid))
     step = 0
     offs = tl.arange(0, BLOCK_F)
@@ -26,7 +24,7 @@ def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
         tl.store(coords_ptr + row*2 + 1, pid)
 
         # compute path-sum via prefix difference
-        child = tl.load(edges_ptr + dest)
+        child = tl.load(edges_ptr + dest, mask=(dest >= 0) & (dest < n_nodes), other=-1)
         for b in range(0, n_feat, BLOCK_F):
             m   = offs + b < n_feat
             p_i = tl.load(prefix_ptr + pid  * n_feat + b + offs, mask=m, other=0.)
@@ -77,8 +75,8 @@ def _closure_enum_fwd(prefix: torch.Tensor,
 
     n, f   = prefix.shape
     N_path = int(path_cumsum[-1].item())
-    coords = torch.empty((N_path, 2), dtype=torch.int64, device=prefix.device)
-    vals   = torch.empty((N_path, f),  dtype=prefix.dtype, device=prefix.device)
+    coords = torch.empty((N_path, 2), dtype=path_cumsum.dtype, device=prefix.device)
+    vals   = torch.empty((N_path, f), dtype=prefix.dtype, device=prefix.device)
 
     with torch.cuda.device(prefix.device):
         _coo_enum_sum_kernel[(n,)](coords, vals,
