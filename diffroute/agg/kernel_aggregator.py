@@ -52,12 +52,13 @@ class RoutingIRFAggregator(nn.Module):
         self.block_f = block_f
         self.sampler = SubResolutionSampler(dt=dt, out_mode=sampling_mode)        
         
-    def forward(self, g):
+    def forward(self, g, params=None):
+        if params is None: params = g.params
         irf_fn = IRF_FN[g.irf_fn]
         n_nodes = len(g.nodes_idx)
         out_size = (n_nodes, n_nodes, self.max_delay)
 
-        coords, irfs_agg = aggregate_irf( g.params, 
+        coords, irfs_agg = aggregate_irf( params, 
                                           irf_fn=irf_fn,
                                           edges=g.edges, 
                                           path_cumsum=g.path_cumsum, 
