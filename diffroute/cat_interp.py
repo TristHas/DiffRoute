@@ -5,7 +5,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
-from .utils import get_node_idxs
+from .utils import get_node_idxs, DataFrameTh
 
 def index_precompute(cin, cout,            # (N,) int64
                      map_river, map_pixel, # (R,) int64  (unordered OK)
@@ -80,14 +80,7 @@ def river_to_pixel_gpu_pt(vals,                # (N, F) float32/64, **must** be 
                                                      map_weight)
     out = aggregate(vals, weight, idx, row_id, M, inverse, p_in, c_out_unique)
     return out, c_out_unique, p_in
-    
-class DataFrameTh(nn.Module):
-    def __init__(self, df):
-        super().__init__()
-        self.map_inp = pd.Series(np.arange(len(df.columns)), index=df.columns)
-        self.index   = pd.Series(np.arange(len(df.index)), index=df.index)
-        self.register_buffer("values", torch.from_numpy(df.values).t().contiguous())
-        
+            
 class CI(nn.Module):
     def __init__(self, g, weight_df):
         """
@@ -130,8 +123,11 @@ class CI(nn.Module):
         
 class CatchmentInterpolator(nn.Module):
     def __init__(self, gs, runoff, weight_df):
+        """
+            
+        """
         super().__init__()
-        self.runoff = DataFrameTh(runoff)
+        self.runoff = DataFrameTh.from_pandas(runoff)
         self.weight_df = weight_df.copy()
         self.weight_df["pixel_idx"].values[:] = self.runoff.map_inp.loc[weight_df["pixel_idx"]].values
         self.weight_df = self.weight_df.sort_values("river_id").set_index("river_id")
