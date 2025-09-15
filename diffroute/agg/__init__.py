@@ -1,1 +1,1 @@
-from .kernel_aggregator import RoutingIRFAggregator
+from .kernel_aggregator import IRFAggregator

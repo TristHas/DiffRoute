@@ -88,3 +88,6 @@ IRF_PARAMS = {
         "muskingum":["x", "k"],
         "hayami":["D", "L", "c"]
 }
+
+def register_irf(name, func):
+    IRF_FN[name]=func

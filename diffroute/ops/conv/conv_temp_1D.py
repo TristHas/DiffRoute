@@ -1,14 +1,10 @@
 import torch
 import torch.nn.functional as F
-from .triton_kernels import (
+from .conv_temp_1D_triton import (
     block_sparse_conv_1d_fwd_kernel,
     block_sparse_conv_1d_bwd_dx_kernel,
     block_sparse_conv_1d_bwd_dvalues_kernel
 )
-
-# ---------------------------------------------------------------------------
-# Padding / blocking helpers (no dict meta)
-# ---------------------------------------------------------------------------
 
 def pad_block_permute(x: torch.Tensor, block_size: int):
     """
@@ -231,7 +227,7 @@ class BlockSparseConv1dFn(torch.autograd.Function):
         # None for non-tensor args
         return dx, None, dvalues, None, None, None, None
 
-def block_sparse_conv_1d_autograd(x, coo_block_coords, values, kernel_shape,
+def block_sparse_conv_1d(x, coo_block_coords, values, kernel_shape,
                          BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16):
     return BlockSparseConv1dFn.apply(
         x, coo_block_coords, values, kernel_shape,

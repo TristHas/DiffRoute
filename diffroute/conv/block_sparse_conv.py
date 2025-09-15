@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from .torch_function import block_sparse_conv_1d_autograd
-from ..block_sparse_tensor import BlockSparseTensor
+from ..ops import block_sparse_conv_1d
+from ..structs import BlockSparseKernel
 
 def conv1d_block_sparse(x, block_values, cols, rows):
     """
@@ -69,16 +69,16 @@ class BlockSparseCausalConv(nn.Module):
         
         """
         if w is None: w = self.bs_kernel
-        assert isinstance(w, BlockSparseTensor), "Kernel must be provided either at init or at forward"
+        assert isinstance(w, BlockSparseKernel), "Kernel must be provided either at init or at forward"
         BLOCK_SIZE_M = w.block_size if self.block_m is None else self.block_m
         BLOCK_SIZE_N = self.block_n
         if self.conv_imp=="triton":
-            return block_sparse_conv_1d_autograd(x, 
-                                                 w.block_indices, 
-                                                 w.block_values,
-                                                 w.size,
-                                                 BLOCK_SIZE_M, 
-                                                 BLOCK_SIZE_N)
+            return block_sparse_conv_1d(x, 
+                                        w.block_indices, 
+                                        w.block_values,
+                                        w.size,
+                                        BLOCK_SIZE_M, 
+                                        BLOCK_SIZE_N)
         else:        
             return conv1d_block_sparse(
                 x, 
@@ -89,6 +89,6 @@ class BlockSparseCausalConv(nn.Module):
 
     def to(self, device, **kwargs):
         super().to(device, **kwargs)
-        if isinstance(self.bs_kernel, BlockSparseTensor):
+        if isinstance(self.bs_kernel, BlockSparseKernel):
             self.bs_kernel = self.bs_kernel.to(device)
             return self

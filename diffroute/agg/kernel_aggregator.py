@@ -1,10 +1,10 @@
-from imports import *
+import torch
+from torch import nn as nn
 
-from .index_precompute import init_pre_indices
-from .transitive_closure import sparse_irf_coo_complex
-from .kernel_sampler import SubResolutionSampler
+from ..ops import log_transitive_closure
+from .temporal_sampler import SubResolutionSampler
 
-from ..block_sparse_tensor import BlockSparseTensor
+from ..structs import BlockSparseKernel
 from ..irfs import IRF_FN
 
 def aggregate_irf(params, irf_fn,
@@ -20,7 +20,7 @@ def aggregate_irf(params, irf_fn,
     assert time_window_expanded == time_window * int( 1 / dt )
     
     irfs_freq = torch.fft.rfft(irfs, n=time_window_expanded, dim=-1)
-    coords, irfs_freq_agg = sparse_irf_coo_complex(
+    coords, irfs_freq_agg = log_transitive_closure(
         irfs_freq, edges, path_cumsum,
         include_self=include_index_diag, 
         block_f=block_f
@@ -28,7 +28,7 @@ def aggregate_irf(params, irf_fn,
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
     return coords, irfs_agg
 
-class RoutingIRFAggregator(nn.Module):
+class IRFAggregator(nn.Module):
     def __init__(self,
                  max_delay=6, 
                  block_size=16,
@@ -72,7 +72,7 @@ class RoutingIRFAggregator(nn.Module):
         irfs_agg = self.sampler.phi_k(irfs_agg.flip(-1))
         irfs_agg /= irfs_agg.sum(-1, keepdims=True) 
         
-        return BlockSparseTensor.from_coo(coords, irfs_agg, 
+        return BlockSparseKernel.from_coo(coords, irfs_agg, 
                                           block_size=self.block_size, 
                                           size=out_size,
                                           flip_values=False)

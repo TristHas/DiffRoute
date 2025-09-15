@@ -1,6 +1,6 @@
 import torch
-from .closure import closure_sub
-from .prefix import prefix_sum
+from .closure_sub import closure_sub
+from .prefix_sum import prefix_sum
 
 def stable_log_flattened(taus: torch.Tensor, epsilon: float = 1e-8) -> torch.Tensor:
     """
@@ -26,20 +26,20 @@ def exp_complex(log_freqs):
     freqs = torch.exp(log_freqs)
     return freqs
 
-def sparse_irf_coo_triton(irf, edges, path_cumsum,
+def transitive_closure(irf, edges, path_cumsum,
                           include_self=True, block_f=128):
     prefix     = prefix_sum(irf, edges, block_f)
     coords, v  = closure_sub(prefix, edges, path_cumsum,
                              include_self, block_f)
     return coords, v, prefix
 
-def sparse_irf_coo_complex(irfs_freq, edges, path_cumsum,
+def log_transitive_closure(irfs_freq, edges, path_cumsum,
                            *, include_self=True, block_f=128):
     """
         
     """
     log_irfs_freq = stable_log_flattened(irfs_freq)
-    coords, log_irfs_freq_agg, log_irfs_freq_prefix = sparse_irf_coo_triton(
+    coords, log_irfs_freq_agg, log_irfs_freq_prefix = transitive_closure(
         log_irfs_freq, edges, path_cumsum,
         include_self=include_self, block_f=block_f)
     irfs_freq_agg = exp_complex(log_irfs_freq_agg)

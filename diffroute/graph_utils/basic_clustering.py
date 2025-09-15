@@ -4,7 +4,7 @@ from tqdm.notebook import tqdm
 import pandas as pd
 import networkx as nx
 
-from diffroute.utils import get_node_idxs
+from ..structs import get_node_idxs
 
 def upstream_path_stats_w_breakpoints(G, threshold=10**9):
     """
@@ -82,11 +82,6 @@ def segment_graph_by_breakpoints(G, add_edge=False):
 
 def group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, edges, subgraph_weights, thr):
     """
-    cluster_subgraphs: dict mapping subgraph id to nx.DiGraph 
-    dependencies: list of tuples (start_subgraph, end_subgraph)
-    edges: list of tuples (start_node, end_node) linking nodes in dependent subgraphs
-    sum_all_lengths: mapping used to compute subgraph weights (via get_root)
-    thr: weight threshold for merging clusters
     """
     print("Initialize dependencies...")
     # Compute weights for each subgraph
@@ -178,12 +173,6 @@ def group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, edges, s
         node_transfer[start_cluster_idx].append((end_cluster_idx, start_edge_idx, end_edge_index))
     
     return clusters_g, node_transfer
-
-def get_root(g):
-    outd = pd.Series(dict(g.out_degree))
-    root = outd[outd==0].index.tolist()
-    assert len(root)==1
-    return root[0]
 
 def define_schedule(G, plength_thr=10**5, node_thr=10**4, runoff_to_output=False):
     print("#### Upstream stats computations ... ####")

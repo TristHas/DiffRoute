@@ -12,8 +12,7 @@ def init_pre_indices(g: nx.DiGraph,
     g : nx.DiGraph
         Original graph whose nodes can be any hashable objects.
     node_idxs : pd.Series, optional
-        Mapping node_label → integer index.  If None, DFS preorder is used
-        (identical to previous behaviour).
+        Mapping node_label → integer index.
     include_self : bool, default False
         Forwarded to `downstream_path_stats`.
 
