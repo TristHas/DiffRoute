@@ -79,7 +79,7 @@ class LTIStagedRouter(nn.Module):
         Returns:
             out: [N_total_nodes, T]
         """
-        if not display_progress: tqdm = lambda y: y
+        pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
 
         transfer_bucket = self._init_transfer_bucket(x, gs)
@@ -87,7 +87,7 @@ class LTIStagedRouter(nn.Module):
                           device=x.device, dtype=x.dtype)
 
         start = 0
-        for cid, param in enumerate(tqdm(params)):
+        for cid, param in enumerate(pbar(params)):
             s, e = gs.node_ranges[cid, 0].item(), gs.node_ranges[cid, 1].item()
             y_c, transfer_bucket = self.route_one_cluster(x[:,s:e], gs, cid, param, transfer_bucket)
             end = start + y_c.shape[1]
@@ -103,11 +103,11 @@ class LTIStagedRouter(nn.Module):
         Batch helper: xs is a list/iterable of [n_c, T] tensors per cluster.
         Yields: tensors [n_c, T].
         """
-        if not display_progress: tqdm = lambda y: y
+        pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
 
         transfer_bucket = None
-        for idx, (x_c, param) in enumerate(tqdm(zip(xs, params))):
+        for idx, (x_c, param) in enumerate(pbar(zip(xs, params))):
             if idx == 0: transfer_bucket = self._init_transfer_bucket(x_c, gs)
             out_c, transfer_bucket = self.route_one_cluster(x_c, gs, idx, param, transfer_bucket)
             yield out_c  
@@ -118,11 +118,11 @@ class LTIStagedRouter(nn.Module):
         """
         Run sequentially up to (but not including) `cluster_idx` and return the transfer bucket.
         """
-        if not display_progress: tqdm = lambda y: y
+        pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
         transfer_bucket = None
         
-        for idx, (x_c, param) in enumerate(tqdm(zip(xs, params))):
+        for idx, (x_c, param) in enumerate(pbar(zip(xs, params))):
             if idx == 0: transfer_bucket = self._init_transfer_bucket(x_c, gs)
             if idx == cluster_idx: return transfer_bucket
             _, transfer_bucket = self.route_one_cluster(x_c, gs, idx, param, transfer_bucket)
