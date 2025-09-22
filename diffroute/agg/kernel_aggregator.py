@@ -69,7 +69,7 @@ class IRFAggregator(nn.Module):
                                           block_f=self.block_f)
         
         irfs_agg = torch.relu(irfs_agg)
-        irfs_agg = self.sampler.phi_k(irfs_agg.flip(-1))
+        irfs_agg = self.sampler.phi_k(irfs_agg).flip(-1)
         irfs_agg /= irfs_agg.sum(-1, keepdims=True) 
         
         return BlockSparseKernel.from_coo(coords, irfs_agg, 
