@@ -14,11 +14,12 @@ class RivTree(nn.Module):
     def __init__(self, g, 
                  irf_fn=None, 
                  include_index_diag=True,
-                 param_df=None):
+                 param_df=None,
+                 nodes_idx=None):
         """ """
         super().__init__()
         self.g = g
-        self.nodes_idx = init_node_idxs(g)
+        self.nodes_idx = nodes_idx if nodes_idx is not None else init_node_idxs(g)
         self.include_index_diag = include_index_diag
         self.irf_fn = irf_fn
         
@@ -46,12 +47,15 @@ class RivTreeCluster(nn.Module):
     def __init__(self, clusters_g, node_transfer, 
                  irf_fn=None, 
                  include_index_diag=True,
-                 param_df=None):
+                 param_df=None,
+                 nodes_idx=None):
         super().__init__()
+        if nodes_idx is None: nodes_idx = [None]*len(clusters_g)
         self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
                                          include_index_diag=include_index_diag,
-                                         param_df=param_df) \
-                                 for g in tqdm(clusters_g)])
+                                         param_df=param_df,
+                                         nodes_idx=nodes_idx[i]) \
+                                 for i,g in enumerate(tqdm(clusters_g))])
         self.node_transfer = node_transfer
         all_nodes = np.concatenate([g.nodes_idx.index.values for g in self.gs])
         self.nodes_idx = pd.Series(np.arange(len(all_nodes)),
