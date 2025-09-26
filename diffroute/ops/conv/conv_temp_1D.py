@@ -18,11 +18,7 @@ def pad_block_permute(x: torch.Tensor, block_size: int):
     B, C, T = x.shape
     n_blocks = (C + block_size - 1) // block_size
     padded_C = n_blocks * block_size
-    if padded_C != C:
-        # pad channel dimension (dim=1) -> F.pad pads last dims first:
-        # For 3D (B,C,T): pad spec is (T_left, T_right, C_left, C_right)
-        x = F.pad(x, (0, 0, 0, padded_C - C))
-    # Reshape and permute to blocked layout
+    if padded_C != C: x = F.pad(x, (0, 0, 0, padded_C - C))
     x_blk = x.view(B, n_blocks, block_size, T).permute(0, 1, 3, 2).contiguous()
     return x_blk, C, padded_C, n_blocks
 
@@ -38,7 +34,6 @@ def unpermute_unpad_block(x_blk: torch.Tensor, orig_C: int):
 # ---------------------------------------------------------------------------
 # Forward
 # ---------------------------------------------------------------------------
-
 def block_sparse_conv_1d_forward(
         x: torch.Tensor,
         coo_block_coords: torch.Tensor,     # [N_NONZERO_BLOCKS, 2] (r_block, c_block)

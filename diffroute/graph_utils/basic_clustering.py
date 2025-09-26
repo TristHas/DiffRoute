@@ -78,8 +78,6 @@ def segment_graph_by_breakpoints(G, add_edge=False):
         #assert (u in cluster_subgraphs[cluster_v].nodes) and (not v in cluster_subgraphs[cluster_u].nodes)
     return cluster_subgraphs, dependencies, removed_edges
 
-
-
 def group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, edges, subgraph_weights, thr):
     """
     """
@@ -183,6 +181,4 @@ def define_schedule(G, plength_thr=10**5, node_thr=10**4, runoff_to_output=False
     print("#### Grouping subgraphs to cluster and infering dependencies ... ####")
     clusters_g, node_transfer = group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, 
                                                                    edges, subgraph_weights, thr=node_thr)
-    #print("#### Cluster Annotations ... ####")
-    #for g in clusters_g: annotate_downstream_path_stats(g, include_self=not runoff_to_output)
     return clusters_g, node_transfer
