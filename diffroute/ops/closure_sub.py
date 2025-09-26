@@ -10,7 +10,6 @@ def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
                          BLOCK_F: tl.constexpr):
     pid  = tl.program_id(0)  # start node
     if pid >= n_nodes: return
-
     # global write offset for this start node
     base = tl.load(cumsum_ptr + (pid - 1), mask=(pid > 0), other=0)
     dest = tl.where(INCLUDE_SELF, pid, tl.load(edges_ptr + pid))
@@ -71,7 +70,7 @@ def _closure_enum_fwd(prefix: torch.Tensor,
     """
     prefix      = prefix.contiguous()
     edges       = edges.contiguous()
-    path_cumsum = path_cumsum.to(torch.int32).contiguous()  # safe cast
+    path_cumsum = path_cumsum.contiguous()  # safe cast .to(torch.int32)
 
     n, f   = prefix.shape
     N_path = int(path_cumsum[-1].item())
