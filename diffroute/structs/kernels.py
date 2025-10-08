@@ -2,10 +2,20 @@ import torch
 import torch.nn as nn
 
 class SparseKernel(nn.Module):
-    def __init__(self, coords, vals):
+    def __init__(self, coords, vals, size):
         self.coords = coords
         self.vals = vals
+        self.size = size
 
+    def to_block_sparse(self, block_size):
+        return BlockSparseKernel.from_sparse_kernel(self, block_size=block_size)
+
+    def to_dense(self):
+        dense = torch.zeros(self.size, dtype=self.vals.dtype, device=self.vals.device)
+        flat_idx = coords[:, 0] * W + coords[:, 1]
+        dense.view(-1, ks).index_add_(0, flat_idx, self.vals)
+        return dense
+        
 class BlockSparseKernel(nn.Module): 
     def __init__(self, block_indices, block_values, block_size, size):
         """
@@ -136,10 +146,10 @@ class BlockSparseKernel(nn.Module):
         return cls(unique_blocks, block_values, block_size, size)
 
     @classmethod
-    def from_sparse_kernel(cls, kernel, block_size, size=None):
+    def from_sparse_kernel(cls, kernel, block_size):
         return cls.from_coo(kernel.coords, kernel.vals, 
                             block_size=block_size, 
-                            size=size)
+                            size=kernel.size)
     
     @classmethod
     def from_irfs(cls, irfs, block_size):
