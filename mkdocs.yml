@@ -7,6 +7,9 @@ theme:
     - content.code.copy
 extra_css:
   - stylesheets/extra.css
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
 nav:
   - Overview: index.md
   - Quickstart: quickstart.md
@@ -15,14 +18,25 @@ nav:
       - Multi-stage Routing: concepts/multi_stage.md
       - Data Structures: concepts/data_structures.md
       - IO: concepts/io.md
+  - API Reference: api.md
   - Code Structure: code_structure.md
   - Examples:
       - Routing a RAPID Project: examples/rapid.md
       - Defining a Custom IRF: examples/custom_irf.md
 plugins:
   - search
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: false
+            separate_signature: true
+            members_order: source
 markdown_extensions:
   - admonition
   - toc:
       permalink: true
   - pymdownx.superfences
+  - pymdownx.arithmatex:
+      generic: true
