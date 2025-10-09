@@ -10,9 +10,10 @@ from .router import LTIRouter
 from .ops import write_slice
 
 class LTIStagedRouter(nn.Module):
-    """
-        Tensor-only staged router over clusters.
-        All public methods return/consume torch.Tensor.
+    """Staged router that orchestrates block-sparse routing over clusters.
+
+    Wraps `LTIRouter` while managing inter-cluster transfers entirely in
+    PyTorch tensors for batched execution.
     """
     def __init__(
         self,
@@ -23,6 +24,16 @@ class LTIStagedRouter(nn.Module):
         cascade: int = 1,
         sampling_mode: str = "avg",
     ) -> None:
+        """Configure the staged router and construct its base LTI model.
+
+        Args:
+            max_delay (int): Maximum impulse response length in time-steps.
+            block_size (int | None): Optional override for kernel block size.
+            block_f (int): Hidden dimensionality for kernel factorization.
+            dt (float): Temporal resolution of the runoff inputs.
+            cascade (int): Number of cascaded IRFs combined by the aggregator.
+            sampling_mode (str): Strategy for sampling cascade parameters.
+        """
         super().__init__()
         self.model = LTIRouter(max_delay=max_delay, 
                                block_size=block_size,
@@ -36,9 +47,7 @@ class LTIStagedRouter(nn.Module):
 
     def _apply_incoming(self, runoff: torch.Tensor, gs, cluster_idx: int,
                         transfer_bucket: torch.Tensor | None) -> torch.Tensor:
-        """
-            runoff: [1, n_c, T]
-        """
+        """Merge upstream transfers into the current cluster runoff."""
         if transfer_bucket is None or cluster_idx not in gs.dst_transfer:
             return runoff
         dst_idx, g_idx = gs.dst_transfer[cluster_idx] 
@@ -47,9 +56,7 @@ class LTIStagedRouter(nn.Module):
 
     def _store_outgoing(self, discharge: torch.Tensor, gs, cluster_idx: int,
                         transfer_bucket: torch.Tensor | None) -> torch.Tensor | None:
-        """
-        discharge: [B, n_c, T]
-        """
+        """Accumulate downstream transfers produced by the current cluster."""
         if transfer_bucket is None or cluster_idx not in gs.src_transfer:
             return transfer_bucket
         src_idx, g_idx = gs.src_transfer[cluster_idx] 
@@ -60,9 +67,18 @@ class LTIStagedRouter(nn.Module):
                            params=None,
                            transfer_bucket: torch.Tensor | None = None
                            ) -> Tuple[torch.Tensor, torch.Tensor | None]:
-        """
-            x_c: [n_c, T] for cluster `cluster_idx`
-            Returns: (y_c: [n_c, T], updated transfer_bucket)
+        """Route a single cluster and update the transfer bucket.
+
+        Args:
+            runoff (torch.Tensor): Cluster runoff shaped `[B, n_c, T]`.
+            gs: Clustered river structure providing routing metadata.
+            cluster_idx (int): Identifier of the cluster to route.
+            params (Any | None): Optional parameter bundle for the cluster.
+            transfer_bucket (torch.Tensor | None): Global transfer storage.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor | None]: Routed discharge for
+            the cluster and the updated transfer bucket.
         """
         runoff = self._apply_incoming(runoff, gs, cluster_idx, transfer_bucket).clone()
         y_c = self.model(runoff, gs[cluster_idx], params)  # [n_c, T]
@@ -71,13 +87,16 @@ class LTIStagedRouter(nn.Module):
 
     def route_all_clusters(self, x: torch.Tensor, gs, params: List[Any] | None = None,
                            display_progress: bool = False) -> torch.Tensor:
-        """
+        """Route all clusters sequentially and assemble the full discharge.
+
         Args:
-            x: [N_total_nodes, T]
-            gs: graph/cluster structure with node_ranges, nodes_idx, etc.
-            params: list per cluster or None
+            x (torch.Tensor): Full runoff tensor shaped `[B, N_nodes, T]`.
+            gs: Clustered river structure with index metadata.
+            params (List[Any] | None): Optional per-cluster parameter list.
+            display_progress (bool): Whether to wrap the loop with a tqdm bar.
+
         Returns:
-            out: [N_total_nodes, T]
+            torch.Tensor: Routed discharge tensor shaped `[B, N_nodes, T]`.
         """
         pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
@@ -99,9 +118,16 @@ class LTIStagedRouter(nn.Module):
     def route_all_clusters_yield(self, xs: List[torch.Tensor], gs, 
                                  params: List[Any] | None = None,
                                  display_progress: bool = False):
-        """
-        Batch helper: xs is a list/iterable of [n_c, T] tensors per cluster.
-        Yields: tensors [n_c, T].
+        """Yield per-cluster discharges lazily for streamed routing.
+
+        Args:
+            xs (List[torch.Tensor]): Sequence of cluster runoff tensors.
+            gs: Clustered river structure with transfer metadata.
+            params (List[Any] | None): Optional per-cluster parameter list.
+            display_progress (bool): Whether to wrap iteration in tqdm.
+
+        Yields:
+            torch.Tensor: Discharge tensor for each cluster in order.
         """
         pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
@@ -115,8 +141,17 @@ class LTIStagedRouter(nn.Module):
     def init_upstream_discharges(self, xs: List[torch.Tensor], gs, cluster_idx: int,
                                  params: List[Any] | None = None,
                                  display_progress: bool = False) -> torch.Tensor:
-        """
-        Run sequentially up to (but not including) `cluster_idx` and return the transfer bucket.
+        """Warm up the staged router until the target cluster.
+
+        Args:
+            xs (List[torch.Tensor]): Sequence of cluster runoff tensors.
+            gs: Clustered river structure with transfer metadata.
+            cluster_idx (int): Cluster index to stop before routing.
+            params (List[Any] | None): Optional per-cluster parameter list.
+            display_progress (bool): Whether to wrap iteration in tqdm.
+
+        Returns:
+            torch.Tensor: Transfer bucket capturing upstream discharges.
         """
         pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)

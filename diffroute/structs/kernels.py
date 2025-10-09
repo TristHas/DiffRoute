@@ -2,24 +2,41 @@ import torch
 import torch.nn as nn
 
 class SparseKernel(nn.Module):
+    """COO-formatted sparse kernel used for routing convolutions."""
     def __init__(self, coords, vals, size):
+        """Initialize kernel coordinates, values, and target size.
+
+        Args:
+            coords (torch.Tensor): Integer indices of non-zero entries `[N, 2]`.
+            vals (torch.Tensor): Kernel values aligned with `coords` `[N, ks]`.
+            size (Tuple[int, int, int]): Height, width, and kernel length.
+        """
         self.coords = coords
         self.vals = vals
         self.size = size
 
     def to_block_sparse(self, block_size):
+        """Convert the kernel to a block-sparse representation."""
         return BlockSparseKernel.from_sparse_kernel(self, block_size=block_size)
 
     def to_dense(self):
+        """Materialize the sparse kernel as a dense tensor."""
         dense = torch.zeros(self.size, dtype=self.vals.dtype, device=self.vals.device)
         flat_idx = coords[:, 0] * W + coords[:, 1]
         dense.view(-1, ks).index_add_(0, flat_idx, self.vals)
         return dense
         
 class BlockSparseKernel(nn.Module): 
+    """Block-sparse tensor storing convolution kernels."""
     def __init__(self, block_indices, block_values, block_size, size):
-        """
-            This class provides the block sparse tensor datastructure to interface stage (i) and (ii)
+        """Store block-sparse indices and values for convolution.
+
+        Args:
+            block_indices (torch.Tensor): Block positions shaped `[B, 2]`.
+            block_values (torch.Tensor): Block data shaped
+                `[B, block_size, block_size, ks]`.
+            block_size (int): Spatial size of an individual block.
+            size (Tuple[int, int, int]): Overall tensor dimensions `(H, W, ks)`.
         """
         super().__init__()
         self.register_buffer("block_indices", block_indices)  # [n_blocks, 2]
@@ -28,18 +45,16 @@ class BlockSparseKernel(nn.Module):
         self.size = size                    # Overall size of the tensor [H, W, ks]
 
     def to(self, device):
-        """
-        """
+        """Move block indices and values to a target device."""
         self.block_indices = self.block_indices.to(device)
         self.block_values = self.block_values.to(device)
         return self
 
     def to_dense(self):
-            """
-            Convert the block-sparse tensor to a dense representation.
-            
+            """Convert the block-sparse tensor to a dense representation.
+
             Returns:
-                A dense tensor of shape (H, W, ks), where H, W, and ks are defined by the size of the tensor.
+                torch.Tensor: Dense tensor of shape `(H, W, ks)`.
             """
             H, W, ks = self.size
             B = self.block_size
@@ -57,14 +72,14 @@ class BlockSparseKernel(nn.Module):
             return dense_tensor    
 
     def to_coo(self, drop_zero_rows=True):
-        """
-            Convert the block-sparse tensor to a COO representation.
-        
-            Args: drop_zero_rows: If True, remove entries whose entire ks-channel is zero.
-        
-            Returns:
-                coords: LongTensor [N, 2] of (row, col)
-                values: Tensor     [N, ks] of values
+        """Convert the block-sparse tensor to COO indices and values.
+
+        Args:
+            drop_zero_rows (bool): Remove locations whose channels are all zero.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: Coordinate tensor `[N, 2]`
+            and value tensor `[N, ks]`.
         """
         device = self.block_values.device
         dtype  = self.block_values.dtype
@@ -113,14 +128,17 @@ class BlockSparseKernel(nn.Module):
         
     @classmethod
     def from_coo(cls, coords, values, block_size, size=None, flip_values=False):
-        """
-        Create a BlockSparseTensor from COO format.
+        """Construct a block-sparse kernel from COO inputs.
 
         Args:
-            coords: Coordinate tensor of shape [N, 2]
-            values: Value tensor of shape [N, ks]
-            block_size: Size of the blocks
-            size: Overall size of the tensor [H, W, ks]
+            coords (torch.Tensor): Coordinate tensor shaped `[N, 2]`.
+            values (torch.Tensor): Value tensor shaped `[N, ks]`.
+            block_size (int): Spatial size of each block.
+            size (Tuple[int, int, int] | None): Optional full tensor shape.
+            flip_values (bool): Reverse kernel direction along the time axis.
+
+        Returns:
+            BlockSparseKernel: Block-sparse representation built from inputs.
         """
         values = values.flip(-1) if flip_values else values
         B = block_size
@@ -147,14 +165,14 @@ class BlockSparseKernel(nn.Module):
 
     @classmethod
     def from_sparse_kernel(cls, kernel, block_size):
+        """Create a block-sparse kernel from a `SparseKernel` instance."""
         return cls.from_coo(kernel.coords, kernel.vals, 
                             block_size=block_size, 
                             size=kernel.size)
     
     @classmethod
     def from_irfs(cls, irfs, block_size):
-        """
-        """
+        """Translate precomputed IRFs into a block-sparse kernel."""
         coords, values, nodes = [],[],set()
         for dest in irfs:
             for source in irfs[dest]:

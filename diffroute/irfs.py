@@ -14,10 +14,10 @@ def irf_kernel_linear_storage(param, time_window=20, dt=1.):
     """
         param[:,0] => tau
     """
-    taus = param[:, 0]
+    taus = param[:, 0] / dt
     extended_time_steps = time_window * int(1/dt)
     t = torch.arange(extended_time_steps, device=taus.device, dtype=taus.dtype)
-    x = 1.0 / (1.0 + taus.unsqueeze(1) / dt)
+    x = 1.0 / (1.0 + taus.unsqueeze(1))
     kernel = x * (1.0 - x)**t
     return kernel
 
@@ -25,10 +25,10 @@ def irf_kernel_cascade_linear_storage(param, n=3, time_window=20, dt=1.):
     """
         param[:,0] => tau  (cascaded n times in closed form)
     """
-    taus = param[:, 0]
+    taus = param[:, 0] / dt
     extended_time_steps = time_window * int(1/dt)
     t = torch.arange(extended_time_steps, device=taus.device, dtype=taus.dtype)
-    x = 1.0 / (1.0 + taus.unsqueeze(1) / dt)
+    x = 1.0 / (1.0 + taus.unsqueeze(1))
     n_tensor = torch.tensor(n, dtype=taus.dtype, device=taus.device)
     binom_coef = torch.exp(torch.lgamma(t + n_tensor) - torch.lgamma(t + 1) - torch.lgamma(n_tensor))
     kernel = binom_coef * (x ** n) * ((1 - x) ** t)
@@ -86,9 +86,16 @@ IRF_PARAMS = {
         "linear_storage":["tau"],
         "nash_cascade":["tau"],
         "muskingum":["x", "k"],
-        "hayami":["D", "L", "c"]
+        "hayami":["L", "D", "c"]
 }
 
 def register_irf(name, func, params):
+    """Register a custom impulse response function for routing.
+
+    Args:
+        name (str): Unique identifier for the IRF.
+        func (Callable): Custom IRF generation function.
+        params (Sequence[str]): Ordered parameter names expected by `func`.
+    """
     IRF_FN[name]=func
     IRF_PARAMS[name]=params

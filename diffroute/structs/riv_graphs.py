@@ -11,12 +11,21 @@ from ..irfs import IRF_PARAMS
 from .utils import init_pre_indices
 
 class RivTree(nn.Module):
+    """River network wrapper that stores IRF parameters per node."""
     def __init__(self, g, 
                  irf_fn=None, 
                  include_index_diag=True,
                  param_df=None,
                  nodes_idx=None):
-        """ """
+        """Initialize river network metadata and parameter buffers.
+
+        Args:
+            g (networkx.DiGraph): Directed river network graph.
+            irf_fn (str | None): Name of the IRF parameterization to use.
+            include_index_diag (bool): Whether to keep self-loops in kernels.
+            param_df (pd.DataFrame | None): Optional parameter table.
+            nodes_idx (pd.Series | None): Precomputed node ordering.
+        """
         super().__init__()
         self.g = g
         self.nodes_idx = nodes_idx if nodes_idx is not None else init_node_idxs(g)
@@ -31,7 +40,12 @@ class RivTree(nn.Module):
         self.init_params(param_df)
 
     def init_params(self, param_df):
-        """ """
+        """Load impulse response parameters from a graph or dataframe.
+
+        Args:
+            param_df (pd.DataFrame | None): Optional parameter values keyed
+                by node indices; if `None`, parameters are read from `self.g`.
+        """
         params = init_params_from_g(self.g, self.irf_fn, self.nodes_idx) if param_df is None\
             else init_params_from_df(param_df, self.irf_fn, self.nodes_idx)            
         self.register_buffer("params", params)
@@ -44,11 +58,23 @@ class RivTree(nn.Module):
         return self.nodes_idx.index.values
 
 class RivTreeCluster(nn.Module):
+    """Collection of river subgraphs with optional inter-cluster transfers."""
     def __init__(self, clusters_g, node_transfer, 
                  irf_fn=None, 
                  include_index_diag=True,
                  param_df=None,
                  nodes_idx=None):
+        """Assemble clustered river networks and transfer bookkeeping.
+
+        Args:
+            clusters_g (Sequence[networkx.DiGraph]): Clustered river graphs.
+            node_transfer (Dict[int, List[Tuple[int, int, int]]] | None):
+                Mapping describing inter-cluster transfers.
+            irf_fn (str | None): Name of the IRF parameterization to use.
+            include_index_diag (bool): Whether kernels include self-loops.
+            param_df (pd.DataFrame | None): Optional parameter table.
+            nodes_idx (Sequence[pd.Series] | None): Custom node orderings.
+        """
         super().__init__()
         if nodes_idx is None: nodes_idx = [None]*len(clusters_g)
         self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
@@ -95,17 +121,40 @@ class RivTreeCluster(nn.Module):
         return self.nodes_idx.index.values
 
 def init_node_idxs(g):
-    """ """
+    """Derive a depth-first traversal ordering for nodes in the graph.
+
+    Args:
+        g (networkx.DiGraph): River network graph.
+
+    Returns:
+        pd.Series: Mapping from node ids to contiguous indices.
+    """
     dfs_order = np.fromiter(nx.dfs_preorder_nodes(g), dtype=int)
     return pd.Series(np.arange(len(dfs_order)), index=dfs_order)
 
 def get_node_idxs(g):
-    """ """
+    """Return cached node indices or compute them from the graph.
+
+    Args:
+        g: Graph-like object optionally carrying a `nodes_idx` attribute.
+
+    Returns:
+        pd.Series: Mapping from node ids to contiguous indices.
+    """
     if hasattr(g, "nodes_idx"): return g.nodes_idx
     else: return init_node_idxs(g)
 
 def init_params_from_g(g, model_name, nodes_idx=None):
-    """ """
+    """Extract IRF parameters stored on graph nodes.
+
+    Args:
+        g (networkx.DiGraph): River network with node attributes.
+        model_name (str | None): Registered IRF identifier.
+        nodes_idx (pd.Series | None): Optional node ordering.
+
+    Returns:
+        torch.Tensor | None: Parameters ordered by `nodes_idx`.
+    """
     if model_name is None: return
     nodes_idx = get_node_idxs(g) if nodes_idx is None else nodes_idx
     p_name = IRF_PARAMS[model_name]
@@ -113,8 +162,15 @@ def init_params_from_g(g, model_name, nodes_idx=None):
     return params.float()
 
 def init_params_from_df(param_df, model_name=None, nodes_idx=None):
-    """ 
-        
+    """Load IRF parameters from a DataFrame.
+
+    Args:
+        param_df (pd.DataFrame): Table of parameter values indexed by nodes.
+        model_name (str | None): Registered IRF identifier.
+        nodes_idx (pd.Series): Node ordering to align with parameters.
+
+    Returns:
+        torch.Tensor: Parameter tensor ordered by `nodes_idx`.
     """
     if model_name is not None:
         p_name = IRF_PARAMS[model_name]
@@ -124,7 +180,16 @@ def init_params_from_df(param_df, model_name=None, nodes_idx=None):
     return params
 
 def read_params(g, model_name, nodes_idx):
-    """ """
+    """Retrieve parameters from the graph or compute defaults.
+
+    Args:
+        g: Graph-like object that may store parameters.
+        model_name (str): Registered IRF identifier.
+        nodes_idx (pd.Series): Node ordering to align parameters.
+
+    Returns:
+        torch.Tensor | None: Parameter tensor if available.
+    """
     if hasattr(g, "params"): return g.garams
     else: return init_params_from_g(g, model_name, nodes_idx)
 
