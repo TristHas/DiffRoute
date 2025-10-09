@@ -89,5 +89,6 @@ IRF_PARAMS = {
         "hayami":["D", "L", "c"]
 }
 
-def register_irf(name, func):
+def register_irf(name, func, params):
     IRF_FN[name]=func
+    IRF_PARAMS[name]=params
