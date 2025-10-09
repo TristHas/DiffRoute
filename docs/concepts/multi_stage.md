@@ -7,10 +7,12 @@ DiffRoute addresses this through staged routing: the river network is segmented 
 
 The worst-case memory complexity of a dense routing kernel is \(O(N^2 \times W / dt)\), where:
 - \(N\) is the number of reaches (graph nodes),
-- \(W\) is the impulse response window expressed in hours,
-- \(dt\) is the routing resolution in hours.
+- \(W\) is the impulse response window expressed in the runoff time step unit (e.g. 10 days for daily runoffs),
+- \(dt\) is the routing temportal resolution relative to runoff (e.g. 1/24 for hourly routing of daily runoffs).
 
-Doubling the graph size quadruples the kernel footprint before considering temporal expansion. For continental-scale networks this becomes intractable. Staging keeps each subgraph small—ideally a few hundred reaches—so the per-cluster kernels fit comfortably in GPU memory.
+Doubling the graph size can up-to-quadruple the kernel footprint before considering temporal expansion. 
+For continental-scale networks at fine spatial resolution, this becomes intractable. 
+Staging keeps each subgraph small so the per-cluster kernels fit comfortably in GPU memory.
 
 ## Segmenting the graph
 
@@ -23,6 +25,8 @@ DiffRoute ships a basic segmentation utility, `diffroute.graph_utils.define_sche
 The segmentation produces:
 - `clusters_g`: a list of NetworkX subgraphs (one per cluster).
 - `node_transfer`: a dictionary describing which nodes exchange discharge across cluster boundaries.
+
+A `RivTreeCluster` object can be instantiated from `clusters_g` and `node_transfer`, and directly consumed by `LTIStagedRouter` that will schedule the routing through the different sub-graphs.
 
 ## Working with `LTIStagedRouter`
 
