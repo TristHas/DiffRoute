@@ -5,10 +5,10 @@ DiffRoute addresses this through staged routing: the river network is segmented 
 
 ## Why staging matters
 
-The worst-case memory complexity of a dense routing kernel is \\(O(N^2 \\times W / dt)\\), where:
-- \\(N\\) is the number of reaches (graph nodes),
-- \\(W\\) is the impulse response window expressed in hours,
-- \\(dt\\) is the routing resolution in hours.
+The worst-case memory complexity of a dense routing kernel is \(O(N^2 \times W / dt)\), where:
+- \(N\) is the number of reaches (graph nodes),
+- \(W\) is the impulse response window expressed in hours,
+- \(dt\) is the routing resolution in hours.
 
 Doubling the graph size quadruples the kernel footprint before considering temporal expansion. For continental-scale networks this becomes intractable. Staging keeps each subgraph small—ideally a few hundred reaches—so the per-cluster kernels fit comfortably in GPU memory.
 
