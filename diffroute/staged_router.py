@@ -18,7 +18,7 @@ class LTIStagedRouter(nn.Module):
     def __init__(
         self,
         max_delay: int = 32,
-        block_size: int | None = None,
+        block_size: int = 16,
         block_f: int = 128,
         dt: float = 1.0,
         cascade: int = 1,
