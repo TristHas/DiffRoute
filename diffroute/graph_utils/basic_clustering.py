@@ -174,7 +174,7 @@ def group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, edges, s
 
 def define_schedule(G, plength_thr=10**5, node_thr=10**4, runoff_to_output=False):
     print("#### Upstream stats computations ... ####")
-    _, _, _, sum_all_lengths = upstream_path_stats_w_breakpoints(G, plength_thr)
+    upstream_path_stats_w_breakpoints(G, plength_thr)
     print("#### Segmentation into subgraphs ... ####")
     cluster_subgraphs, dependencies, edges = segment_graph_by_breakpoints(G)
     subgraph_weights = pd.Series({k: len(v)for k, v in cluster_subgraphs.items()})
