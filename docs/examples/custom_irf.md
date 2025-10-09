@@ -61,6 +61,6 @@ print(discharge.shape)
 ```
 
 Key points:
+
 - Custom IRFs must accept the signature `(params, time_window, dt)` and return a tensor of shape `[n_reaches, window]`.
 - Registering the IRF updates the global `IRF_FN` and `IRF_PARAMS` registries, so `RivTree` knows how to assemble reach-level parameter tensors.
-- You can freely mix built-in and custom IRFs across different clusters in a staged routing setup.

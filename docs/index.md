@@ -11,12 +11,12 @@ Nevertheless, DiffRoute can be used as a standalone component as showcased in th
 Please note that `diffroute` is in an early development stage and thus subject to changes.
 Nevertheless, the explanations included in this documentation are limited to API and structural components that are unlikely to change in the short to middle term.
 
-## Key Capabilities
+## Key Functionalities
 - **GPU Acceleration**: Formulating LTI River Routing operations as 1D Convolution layers allow for efficient GPU execution.
-- **Generality**: DiffRoute allows to formulate *any* LTI River Routing scheme. Currenlty implemented routing schemes include the *Muskingum*, *Linear Diffusive Wave*, *Nash Cascade* and *Pure Lag* schemes. Utility functions allow to easily define and integrate custom LTI routing schemes. 
 - **Differentiable**: DiffRoute is integrated to Pytorch, which allows for efficient gradient computations through Automatic Differentiation.
-- **Batching**: Accepts batched runoff tensors with shape `[batch, catchments, time]` and routes them efficiently.
 - **Scalable**: Computations scale to very large river graphs (up to millions of river channels) using staged computations.
+- **Generality**: DiffRoute allows to formulate *any* LTI River Routing scheme. Currenlty implemented routing schemes include the *Muskingum*, *Linear Diffusive Wave*, *Nash Cascade* and *Pure Lag* schemes. Utility functions allow to easily define and integrate custom LTI routing schemes. 
+- **Batching**: Accepts batched runoff tensors with shape `[batch, catchments, time]` and routes them efficiently.
 
 ## Library Layout
 - `diffroute.router.LTIRouter`: single-stage router suitable for limited size river graphs (up to tens of thousands of river channels).
