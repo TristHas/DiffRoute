@@ -41,6 +41,9 @@ class LTIStagedRouter(nn.Module):
                                sampling_mode=sampling_mode,
                                block_f=block_f)
 
+    def forward(self, x: torch.Tensor, gs, params=None):
+        return self.route_all_clusters(x, gs, params) 
+    
     def _init_transfer_bucket(self, runoff: torch.Tensor, gs) -> torch.Tensor:
         return torch.zeros(runoff.shape[0], gs.tot_transfer, runoff.shape[-1],
                            dtype=runoff.dtype, device=runoff.device)
