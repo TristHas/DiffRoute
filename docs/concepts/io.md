@@ -1,6 +1,7 @@
 # IO Utilities
 
-DiffRoute can ingest RAPID routing configurations and convert them into ready-to-route `RivTree` or `RivTreeCluster` instances. The helpers live in `diffroute.io` and handle both single-VPU and multi-VPU projects.
+`diffroute` can ingest RAPID routing configurations and convert them into ready-to-route `RivTree` or `RivTreeCluster` instances. 
+The helpers live in `diffroute.io` and handle both single-VPU and multi-VPU projects.
 
 ## Reading a single RAPID project
 
@@ -27,8 +28,12 @@ print(type(clustered), len(clustered))
 
 - RAPID parameters (`k`, `x`) are converted to Muskingum IRF coefficients and stored in the resulting data structure.
 - When `plength_thr` and `node_thr` are provided, the function runs the graph segmentation pipeline (`define_schedule`) before building the `RivTreeCluster`.
+- When `plength_thr` and `node_thr` are set as `None`, staging is omitted and a `RivTree` instance is returned.
 
-## Reading multiple VPUs at once
+## Reading multiple RAPID projects at once
+
+Large problems are often split into sub-clusters in RAPID.
+`diffroute` provides a helper function to load arbitrarily many such directories and schedule across these clusters as a single river network. 
 
 ```python
 from pathlib import Path
@@ -50,3 +55,4 @@ print(f"Global reaches: {len(gs.nodes_idx)}")
 ```
 
 `read_multiple_rapid_graphs` merges the VPU graphs into a single NetworkX DAG, combines their Muskingum parameters, and applies the same optional segmentation logic as the single-project loader.
+

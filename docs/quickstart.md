@@ -1,6 +1,8 @@
 # DiffRoute Quickstart
 
-This walkthrough shows how to route synthetic runoff through a tiny river network using `diffroute`. You can adapt the same steps to real networks and calibrated parameters.
+This walkthrough unpacks the Overview code snippet step by step with deeper explanations. 
+It shows an example of routing synthetic runoff through a compact river network using `diffroute`,
+but the same pattern can applied to real catchments and calibrated parameters.
 
 ## 1. Install and import
 
@@ -8,68 +10,83 @@ This walkthrough shows how to route synthetic runoff through a tiny river networ
 pip install git+https://github.com/TristHas/DiffRoute.git
 ```
 
+Installs the latest version of `diffroute` from GitHub; PyTorch, NetworkX, and the remaining dependencies are automatically installed.
+
 ```python
+import numpy as np
+import pandas as pd
 import networkx as nx
 import torch
-from diffroute import LTIRouter, RivTree
+
+from diffroute import RivTree, LTIRouter
 ```
 
 ## 2. Describe the river network
 
-Create a directed acyclic graph with hydrological attributes. 
-Each node stores the impulse-response parameters required by the chosen IRF function (parameter `tau` for routing scheme `linear_storage`).
+Define the toy routing experiment by choosing batch size, number of reaches, simulation length, and target device.
+The device parameter is a torch parameter setting on which GPU the computations are carried.
 
 ```python
-G = nx.DiGraph()
-
-# Define river channels as nodes
-G.add_node(0, tau=12.0) # Upstream headwater
-G.add_node(1, tau=20.0) # Confluence reach
-G.add_node(2, tau=30.0) # Outlet reach
-
-# Define connectivity as edges
-G.add_edge(0, 1)
-G.add_edge(1, 2)
+b = 2       
+n = 20       
+T = 100      
+device = "cuda:0"  
 ```
 
-Wrap the NetworkX graph in a `RivTree`, which precomputes sparse routing structures and stores reach parameters.
+DiffRoute uses NetworkX to describe river graph connectivity.
+Any connectivity format can be easily read into a Networkx graph.
+`nx.gn_graph` quickly supplies a directed tree with a single outlet, which is perfect for demonstration purposes.
 
 ```python
-g = RivTree(
-    G,
-    irf_fn="linear_storage",   # Choose from diffroute.irfs.IRF_FN
-    include_index_diag=False     # Add identity skip if your runoff already includes local discharge
-)
+G = nx.gn_graph(n, seed=0)
+```
+
+Routing also requires per-channel parameters.
+The set of parameters required depends on the routing scheme used.
+Here, we use the `linear_storage` scheme, which parameterizes channels with a unique parameter `tau`. 
+We randomly sample `tau` values for the sake of illustration.
+
+```python
+params = pd.DataFrame({"tau": np.random.rand(n)}, index=G.nodes)
+```
+
+The `RivTree` class is `diffroute`'s native representations of river graphs.
+This structure holds the graph connectivity, routing scheme and parameters as torch tensors.
+As `RivTree` holds the tensor representation of the graph, it needs to be given a `device` for storage through the helper `.to(device)`.
+It can be instantiated from a NetworkX graph for connectivity and pandas DataFrame for parameters.
+
+```python
+riv_tree = RivTree(G, params=params, irf_fn="linear_storage").to(device)
 ```
 
 ## 3. Instantiate the router
 
+`LTIRouter` is the primary PyTorch module provided by DiffRoute and can be dropped into any nn.Module graph.
+You configure it once with routing hyper-parameters: `max_delay` controls the temporal support of the aggregated kernel, 
+and `dt` sets the routing resolution relative to the runoff time step.
+
 ```python
 router = LTIRouter(
-    max_delay=48,   # Maximum time step delay for upstream runoff to reach downstream
-    dt=1,           # Temporal resolution of routing relative to runoff resolution
+    max_delay=48,  # Time steps to cover all upstream travel times
+    dt=1           # Routing resolution relative to runoff resolution
 )
 ```
 
-## 4. Route batched runoff
+## 4. Route runoff
 
-Runoff tensors follow the `[batch, catchments, time]` convention. Below we feed two runoff scenarios over a 7-day horizon (168 hours).
+The router consumes input runoff tensor and `RivTree` structure to output a discharge tensor.
+Both inputs must reside on the same device, or an error will be raised.
+Runoff tensors follow the `[batch, catchments, time]` layout.
+The output discharge is a tensor on the same device as the input and with the same shape as the input runoff.
+The output discharge is fully differentiable with respect to both input runoff and RivTree parameters.
 
 ```python
-batch = 2
-time_steps = 168
-device = "cuda:0"
-
-runoff = torch.rand(batch, len(g), time_steps, device=device)
-g = g.to(device)
-
-discharge = router(runoff, g)
-print(discharge.shape)  # torch.Size([2, 3, 168])
+runoff = torch.rand(b, n, T, device=device)
+discharge = router(runoff, riv_tree)
+print(discharge.shape)
 ```
 
-Gradients flow through the router by design, so you can differentiate with respect to runoff or IRF parameters, or embed the operator inside a larger neural model.
-
 ## Next
-- Go through the **Concepts** section to see more detailed basic usage and explanations on the implementation.
-- Browse through the **Example** section for practical size routing IO and execution and custom routing scheme integration.
-- Visit the `diffhydro` documentation for advanced learning and calibration use-cases.
+- Go through the **Concepts** section for deeper explanations of the core abstractions and configuration details.
+- Browse the **Examples** section for end-to-end workflows that cover IO, execution at scale, and custom IRF integration.
+- Visit the `diffhydro` documentation for advanced learning, calibration, and larger pipeline integrations.

@@ -1,16 +1,15 @@
 # Data Structures
 
-DiffRoute pairs differentiable operators with light-weight data structures that describe river graphs and sparse routing kernels. Understanding these containers makes it easier to integrate the library into existing hydrological or machine learning pipelines.
+DiffRoute pairs differentiable operators with light-weight data structures that describe river graphs and sparse routing kernels. 
+Understanding these containers makes it easier to efficiently use and tweak the library.
 
 ## River graph representation
 
 ### `RivTree`
 
 - Wraps a directed acyclic `networkx.DiGraph` and precomputes the tensors needed for routing (edge lists, path prefixes, parameter matrices).
-- Preserves the node ordering supplied via `nodes_idx`; defaults to a depth-first traversal if none is provided.
-- Stores per-reach IRF parameters in `RivTree.params`, a floating tensor shaped `[n_reaches, n_params]`.
-- Exposes boolean `include_index_diag`; when `False`, the routed discharge is added back to the input runoff inside the router.
-- Provides direct access to underlying graph attributes (for example `riv_tree.g.nodes[node_id]`).
+- Defines an ordering of the nodes. This ordering can either be set at initialization (`nodes_idx`) or defaults to a depth-first traversal if not provided.
+- Stores per-reach IRF parameters in `RivTree.params`, a floating tensor shaped `[n_channels, n_params]`.
 
 ### `RivTreeCluster`
 

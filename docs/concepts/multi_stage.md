@@ -1,11 +1,21 @@
-# Multi-stage Routing
+# Staged Routing
 
-Large basins quickly push single-stage routing to its memory limits because the aggregated routing kernel grows up to the square of the number of reaches. 
-DiffRoute addresses this through staged routing: the river network is segmented into clusters, each routed independently, while inter-cluster discharges are exchanged through transfer buffers.
+Large basins quickly push the LTIRouter routing procedure to the limits of GPU memory.
+This is because the kernel aggregation stage consists in computing the transitive closure of a river graph, which, in dense form, grows as the square of the number of reaches.
+The block-sparse representation of the kernel helps reduce memory and computational burden of the kernel representation and consequent operations.
+However, for extremely large river networks, even the sparse representation of the kernel is too heavy for modern GPU memory capacity.
+
+To adress this problem, `diffroute` exposes a staged routing functionality: 
+large river networks are segmented into clusters.
+Each cluster is routed sequentially according to their topological order (upstream clusters first).
+The output of upstream clusters is fed as input to the routing of downstream clusters through transfer buffers.
+
+This functionality is exposed through the `LTIStagedRouter` torch module and `RivTreeCluster` structure.
 
 ## Why staging matters
 
 The worst-case memory complexity of a dense routing kernel is \(O(N^2 \times W / dt)\), where:
+
 - \(N\) is the number of reaches (graph nodes),
 - \(W\) is the impulse response window expressed in the runoff time step unit (e.g. 10 days for daily runoffs),
 - \(dt\) is the routing temportal resolution relative to runoff (e.g. 1/24 for hourly routing of daily runoffs).
@@ -16,7 +26,7 @@ Staging keeps each subgraph small so the per-cluster kernels fit comfortably in 
 
 ## Segmenting the graph
 
-DiffRoute ships a basic segmentation utility, `diffroute.graph_utils.define_schedule`, that:
+`diffroute` ships a basic segmentation utility, `diffroute.graph_utils.define_schedule`, that:
 1. Scans the directed acyclic river graph and flags breakpoints when upstream routing paths exceed the `plength_thr` threshold.
 2. Cuts breakpoint edges to produce weakly connected components.
 3. Groups components into clusters that respect the `node_thr` size limit.
@@ -68,7 +78,7 @@ router = LTIStagedRouter(
 )
 
 runoff = torch.rand(2, len(gs.nodes_idx), 168, device=device)  # [batch, reaches, time]
-discharge = router.route_all_clusters(runoff, gs)
+discharge = router(runoff, gs)
 print(discharge.shape)
 ```
 
@@ -92,3 +102,15 @@ print(f"Total transfer links: {gs.tot_transfer}")
 ```
 
 This helps confirm that clusters remain balanced and that the transfer buffers stay manageable.
+
+### Extremely large problem sizes
+
+Some routing problems are so large that the full output discharge can not be held into GPU memory at once.
+`diffroute` accomodates for this by allowing chunked computations using python generators:
+
+```python
+runoff_generator =  per_subcluster_runoffs # List[torch.Tensor]
+discharge = router.yield_(runoff_generator, gs) # Generator of output torch.Tensor discharge
+```
+
+We recommend using `diffhydro` for surch large problems to efficiently handle chunked runoff generation. 
