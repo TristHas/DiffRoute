@@ -92,7 +92,7 @@ discharge = router(runoff, riv_tree)
 
 ## Documentation
 
-TODO
+Early documentation is accessible [here](https://tristhas.github.io/DiffRoute/).
 
 ## Publications and Citation
 
