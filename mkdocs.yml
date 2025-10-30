@@ -14,12 +14,12 @@ nav:
   - Overview: index.md
   - Quickstart: quickstart.md
   - Concepts:
-      - Single Stage Routing: concepts/single_stage.md
+      - Basic Routing: concepts/single_stage.md
       - Multi-stage Routing: concepts/multi_stage.md
       - Data Structures: concepts/data_structures.md
       - IO: concepts/io.md
-  - API Reference: api.md
   - Code Structure: code_structure.md
+  - API Reference: api.md
   - Examples:
       - Routing a RAPID Project: examples/rapid.md
       - Defining a Custom IRF: examples/custom_irf.md

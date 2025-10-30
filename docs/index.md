@@ -1,39 +1,96 @@
 # DiffRoute Overview
 
-`diffroute` provides a differentiable, GPU-accelerated formulation of classical Linear Time Invariant (LTI) river routing models. 
+`diffroute` provides a differentiable and GPU-accelerated formulation of classical Linear Time Invariant (LTI) river routing models. 
 Every component is written in PyTorch, which keeps routing differentiable and easy to integrate in deep learning workflows.
 
-The motivation for, mathematical derivations behind, and illustrative use-cases of DiffRoute are presented in the paper *"Differentiable river routing for end-to-end learning of hydrological processes"*.
-
-We recommend using diffroute through the companion package `diffhydro`, which layers additional data structures and utilities to ease the use of DiffRoute, with minimal dependency.
-Nevertheless, DiffRoute can be used as a standalone component as showcased in this documentation.
+For advanced use-cases, we recommend using diffroute through the companion module `diffhydro`, 
+which layers additional data structures and utilities to integrate DiffRoute into more complex differentiable hydrological pipelines, with minimal dependency.
+However, DiffRoute can also be used as a standalone component as showcased in this documentation.
 
 Please note that `diffroute` is in an early development stage and thus subject to changes.
 Nevertheless, the explanations included in this documentation are limited to API and structural components that are unlikely to change in the short to middle term.
 
-## Key Functionalities
+## Key Features
 - **GPU Acceleration**: Formulating LTI River Routing operations as 1D Convolution layers allow for efficient GPU execution.
 - **Differentiable**: DiffRoute is integrated to Pytorch, which allows for efficient gradient computations through Automatic Differentiation.
 - **Scalable**: Computations scale to very large river graphs (up to millions of river channels) using staged computations.
-- **Generality**: DiffRoute allows to formulate *any* LTI River Routing scheme. Currenlty implemented routing schemes include the *Muskingum*, *Linear Diffusive Wave*, *Nash Cascade* and *Pure Lag* schemes. Utility functions allow to easily define and integrate custom LTI routing schemes. 
-- **Batching**: Accepts batched runoff tensors with shape `[batch, catchments, time]` and routes them efficiently.
+- **Generality**: DiffRoute allows to formulate *any* LTI River Routing scheme. Currenlty implemented routing schemes include the *Muskingum*, *Linear Diffusive Wave*, *Linear Storage*, *Nash Cascade* and *Pure Lag* schemes. Custom schemes can easily be added as shown in this example. 
+- **Batching**: Accepts batched runoff tensors with shape `[batch, catchments, time]` and routes them efficiently. This simplifies batched training of parameters and inference of ensemble predictions.
+- **Composability**: Integration to Pytorch Automatic Differentiation framework also aims to combine `diffroute` with other learnable components. The companion module `diffhydro` aims to simplify the assembly of more complex hydrological pipelines.
+- **Pure Python**: DiffRoute is written in pure python. As such it is easily hackable for users interested in experimenting with variations.
 
-## Library Layout
-- `diffroute.router.LTIRouter`: single-stage router suitable for limited size river graphs (up to tens of thousands of river channels).
-- `diffroute.staged_router.LTIStagedRouter`: orchestration layer for staged routing across large river networks  (up to millions of river channels).
-- `diffroute.agg.IRFAggregator`: Operator for the first stage of the routing procedure: Kernel aggregation.
-- `diffroute.conv.BlockSparseCausalConv`: Operator for the first stage of the routing procedure: Causal block-sparse convolution.
-- `diffroute.irfs`: Reference implementations for classical routing scheme IRFs plus a utility registry for custom scheme definition.
-- `diffroute.structs`: Typed containers for sparse kernels and river-network metadata.
-- `diffroute.ops`: Low-level implementation of various operators in triton.
+## Installation
 
-Please see the **Code Structure** section for more details.
+You can install `diffroute` from pip repository:
 
-## Typical Workflow
+```bash
+pip install diffroute
+```
 
-1. Build a `RivTree` (or `RivTreeCluster` for large river networks) graph that encodes river channel connectivity and parameters.
-2. Instantiate an `LTIRouter` (or `LTIStagedRouter` for clustered graphs) with the desired routing parameters.
-3. Call the router with a runoff tensor `runoff: torch.Tensor[batch, catchments, time]`.
-4. Use the routed discharge for downstream forecasting, calibration, or training.
+Or install the latest version from GitHub:
+```bash
+pip install git+https://github.com/TristHas/DiffRoute.git
+```
 
-Continue with the quickstart to see a minimal runnable example and recommended configuration patterns.
+Or clone and install locally:
+
+```bash
+git clone https://github.com/TristHas/DiffRoute.git
+cd DiffRoute; pip install .
+```
+
+## Example Usage
+
+Below is a toy example for routing 2 realisations of 100 time steps random input runoff time series through a synthetic river graph of 20 channels.
+
+```python
+import numpy as np
+import pandas as pd
+import networkx as nx
+import torch
+
+from diffroute import RivTree, LTIRouter
+
+b = 2   # Batch (or ensemble size)
+n = 20  # Number of channels
+T = 100 # Number of time steps
+device = "cuda:0" # GPU device to use
+
+G = nx.gn_graph(n) # Toy example tree with a unique outlet.
+# Define per-node routing parameters. For a Linear Storage scheme, only one parameter "tau"
+params = pd.DataFrame({"tau": np.random.rand(n)}, index=G.nodes) 
+# River Tree data structure
+riv_tree = RivTree(G, params=params, irf_fn="linear_storage").to(device) 
+# Generate random input runoff
+runoff = torch.rand(b, n, T, device=device)
+# Instantiate the routing model with desired parameters
+router = LTIRouter(max_delay=48, dt=1)
+# Compute output discharges from input graph and runoffs
+discharge = router(runoff, riv_tree)
+```
+
+## Documentation
+
+We recommend first having a look at the [Quickstart](quickstart.md) page for additional explanations on the above code snippet.
+
+The [Concepts](concepts/single_stage.md) section introduces the main data structures and workflows provided by DiffRoute.
+
+Details on repository structure and API are laid out in [Code Structure](code_structure.md) and the [API Reference](api.md).
+
+The [Examples](examples/rapid.md) section provides two tutorial notebooks for (i) accelerating existing RAPID simulations on GPU and (ii) integrating custom LTI schemes.
+
+For advanced usage examples and integration of DiffRoute into larger differentiable hydrological pipelines, please refer to the [DiffHydro documentation](https://github.com/TristHas/DiffHydro). 
+
+## Contribution
+
+This project is under early development efforts. Please be aware that some changes may be brought to the API in future versions.
+We appreciate all contributions, from reporting bugs to implementing new features. 
+Please use the [GitHub Issues](https://github.com/TristHas/DiffRoute/issues) for any contribution, comment or request.
+
+## License
+
+This project is licensed under the terms of the MIT license.  
+
+## Next
+
+Continue with the [Quickstart](quickstart.md) to see a minimal runnable example and recommended configuration patterns.
