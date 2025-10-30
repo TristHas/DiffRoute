@@ -1,0 +1,984 @@
+
+<!doctype html>
+<html lang="en" class="no-js">
+  <head>
+    
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width,initial-scale=1">
+      
+        <meta name="description" content="Technical reference and quickstart guides for diffroute.">
+      
+      
+      
+      
+        <link rel="prev" href="../../quickstart/">
+      
+      
+        <link rel="next" href="../multi_stage/">
+      
+      
+      <link rel="icon" href="../../assets/images/favicon.png">
+      <meta name="generator" content="mkdocs-1.6.1, mkdocs-material-9.6.22">
+    
+    
+      
+        <title>Basic Routing - DiffRoute Documentation</title>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/stylesheets/main.84d31ad4.min.css">
+      
+      
+
+
+    
+    
+      
+    
+    
+      
+        
+        
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+        <link rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:300,300i,400,400i,700,700i%7CRoboto+Mono:400,400i,700,700i&display=fallback">
+        <style>:root{--md-text-font:"Roboto";--md-code-font:"Roboto Mono"}</style>
+      
+    
+    
+      <link rel="stylesheet" href="../../assets/_mkdocstrings.css">
+    
+      <link rel="stylesheet" href="../../stylesheets/extra.css">
+    
+    <script>__md_scope=new URL("../..",location),__md_hash=e=>[...e].reduce(((e,_)=>(e<<5)-e+_.charCodeAt(0)),0),__md_get=(e,_=localStorage,t=__md_scope)=>JSON.parse(_.getItem(t.pathname+"."+e)),__md_set=(e,_,t=localStorage,a=__md_scope)=>{try{t.setItem(a.pathname+"."+e,JSON.stringify(_))}catch(e){}}</script>
+    
+      
+
+    
+    
+    
+  </head>
+  
+  
+    <body dir="ltr">
+  
+    
+    <input class="md-toggle" data-md-toggle="drawer" type="checkbox" id="__drawer" autocomplete="off">
+    <input class="md-toggle" data-md-toggle="search" type="checkbox" id="__search" autocomplete="off">
+    <label class="md-overlay" for="__drawer"></label>
+    <div data-md-component="skip">
+      
+        
+        <a href="#basic-routing" class="md-skip">
+          Skip to content
+        </a>
+      
+    </div>
+    <div data-md-component="announce">
+      
+    </div>
+    
+    
+      
+
+  
+
+<header class="md-header md-header--shadow" data-md-component="header">
+  <nav class="md-header__inner md-grid" aria-label="Header">
+    <a href="../.." title="DiffRoute Documentation" class="md-header__button md-logo" aria-label="DiffRoute Documentation" data-md-component="logo">
+      
+  <img src="../../diffhydro.png" alt="logo">
+
+    </a>
+    <label class="md-header__button md-icon" for="__drawer">
+      
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M3 6h18v2H3zm0 5h18v2H3zm0 5h18v2H3z"/></svg>
+    </label>
+    <div class="md-header__title" data-md-component="header-title">
+      <div class="md-header__ellipsis">
+        <div class="md-header__topic">
+          <span class="md-ellipsis">
+            DiffRoute Documentation
+          </span>
+        </div>
+        <div class="md-header__topic" data-md-component="header-topic">
+          <span class="md-ellipsis">
+            
+              Basic Routing
+            
+          </span>
+        </div>
+      </div>
+    </div>
+    
+    
+      <script>var palette=__md_get("__palette");if(palette&&palette.color){if("(prefers-color-scheme)"===palette.color.media){var media=matchMedia("(prefers-color-scheme: light)"),input=document.querySelector(media.matches?"[data-md-color-media='(prefers-color-scheme: light)']":"[data-md-color-media='(prefers-color-scheme: dark)']");palette.color.media=input.getAttribute("data-md-color-media"),palette.color.scheme=input.getAttribute("data-md-color-scheme"),palette.color.primary=input.getAttribute("data-md-color-primary"),palette.color.accent=input.getAttribute("data-md-color-accent")}for(var[key,value]of Object.entries(palette.color))document.body.setAttribute("data-md-color-"+key,value)}</script>
+    
+    
+    
+      
+      
+        <label class="md-header__button md-icon" for="__search">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        </label>
+        <div class="md-search" data-md-component="search" role="dialog">
+  <label class="md-search__overlay" for="__search"></label>
+  <div class="md-search__inner" role="search">
+    <form class="md-search__form" name="search">
+      <input type="text" class="md-search__input" name="query" aria-label="Search" placeholder="Search" autocapitalize="off" autocorrect="off" autocomplete="off" spellcheck="false" data-md-component="search-query" required>
+      <label class="md-search__icon md-icon" for="__search">
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M9.5 3A6.5 6.5 0 0 1 16 9.5c0 1.61-.59 3.09-1.56 4.23l.27.27h.79l5 5-1.5 1.5-5-5v-.79l-.27-.27A6.52 6.52 0 0 1 9.5 16 6.5 6.5 0 0 1 3 9.5 6.5 6.5 0 0 1 9.5 3m0 2C7 5 5 7 5 9.5S7 14 9.5 14 14 12 14 9.5 12 5 9.5 5"/></svg>
+        
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 11v2H8l5.5 5.5-1.42 1.42L4.16 12l7.92-7.92L13.5 5.5 8 11z"/></svg>
+      </label>
+      <nav class="md-search__options" aria-label="Search">
+        
+        <button type="reset" class="md-search__icon md-icon" title="Clear" aria-label="Clear" tabindex="-1">
+          
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </nav>
+      
+    </form>
+    <div class="md-search__output">
+      <div class="md-search__scrollwrap" tabindex="0" data-md-scrollfix>
+        <div class="md-search-result" data-md-component="search-result">
+          <div class="md-search-result__meta">
+            Initializing search
+          </div>
+          <ol class="md-search-result__list" role="presentation"></ol>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+      
+    
+    
+  </nav>
+  
+</header>
+    
+    <div class="md-container" data-md-component="container">
+      
+      
+        
+          
+        
+      
+      <main class="md-main" data-md-component="main">
+        <div class="md-main__inner md-grid">
+          
+            
+              
+              <div class="md-sidebar md-sidebar--primary" data-md-component="sidebar" data-md-type="navigation" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+
+
+<nav class="md-nav md-nav--primary" aria-label="Navigation" data-md-level="0">
+  <label class="md-nav__title" for="__drawer">
+    <a href="../.." title="DiffRoute Documentation" class="md-nav__button md-logo" aria-label="DiffRoute Documentation" data-md-component="logo">
+      
+  <img src="../../diffhydro.png" alt="logo">
+
+    </a>
+    DiffRoute Documentation
+  </label>
+  
+  <ul class="md-nav__list" data-md-scrollfix>
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../.." class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Overview
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../quickstart/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Quickstart
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+    
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--active md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_3" checked>
+        
+          
+          <label class="md-nav__link" for="__nav_3" id="__nav_3_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Concepts
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_3_label" aria-expanded="true">
+          <label class="md-nav__title" for="__nav_3">
+            <span class="md-nav__icon md-icon"></span>
+            Concepts
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+    
+  
+  
+  
+    <li class="md-nav__item md-nav__item--active">
+      
+      <input class="md-nav__toggle md-toggle" type="checkbox" id="__toc">
+      
+      
+        
+      
+      
+        <label class="md-nav__link md-nav__link--active" for="__toc">
+          
+  
+  
+  <span class="md-ellipsis">
+    Basic Routing
+    
+  </span>
+  
+
+          <span class="md-nav__icon md-icon"></span>
+        </label>
+      
+      <a href="./" class="md-nav__link md-nav__link--active">
+        
+  
+  
+  <span class="md-ellipsis">
+    Basic Routing
+    
+  </span>
+  
+
+      </a>
+      
+        
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core example
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-ltirouter-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      The LTIRouter module
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The LTIRouter module">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#main-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Main Parameters:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secondary-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Secondary Parameters
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-rivtree-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      The RivTree structure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-irfs-and-expected-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in IRFs and expected parameters
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in IRFs and expected parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#registering-custom-routing-schemes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Registering custom routing schemes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#internals-of-the-routing-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Internals of the routing procedure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-parameter-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dynamic parameter inputs
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+      
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../multi_stage/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Multi-stage Routing
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../data_structures/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Data Structures
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../io/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    IO
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../code_structure/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Code Structure
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../api/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    API Reference
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    
+    
+    
+    
+    
+    <li class="md-nav__item md-nav__item--nested">
+      
+        
+        
+        <input class="md-nav__toggle md-toggle " type="checkbox" id="__nav_6" >
+        
+          
+          <label class="md-nav__link" for="__nav_6" id="__nav_6_label" tabindex="0">
+            
+  
+  
+  <span class="md-ellipsis">
+    Examples
+    
+  </span>
+  
+
+            <span class="md-nav__icon md-icon"></span>
+          </label>
+        
+        <nav class="md-nav" data-md-level="1" aria-labelledby="__nav_6_label" aria-expanded="false">
+          <label class="md-nav__title" for="__nav_6">
+            <span class="md-nav__icon md-icon"></span>
+            Examples
+          </label>
+          <ul class="md-nav__list" data-md-scrollfix>
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/rapid/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Routing a RAPID Project
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../examples/custom_irf/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    Defining a Custom IRF
+    
+  </span>
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+          </ul>
+        </nav>
+      
+    </li>
+  
+
+    
+  </ul>
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+            
+              
+              <div class="md-sidebar md-sidebar--secondary" data-md-component="sidebar" data-md-type="toc" >
+                <div class="md-sidebar__scrollwrap">
+                  <div class="md-sidebar__inner">
+                    
+
+<nav class="md-nav md-nav--secondary" aria-label="Table of contents">
+  
+  
+  
+    
+  
+  
+    <label class="md-nav__title" for="__toc">
+      <span class="md-nav__icon md-icon"></span>
+      Table of contents
+    </label>
+    <ul class="md-nav__list" data-md-component="toc" data-md-scrollfix>
+      
+        <li class="md-nav__item">
+  <a href="#core-example" class="md-nav__link">
+    <span class="md-ellipsis">
+      Core example
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-ltirouter-module" class="md-nav__link">
+    <span class="md-ellipsis">
+      The LTIRouter module
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="The LTIRouter module">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#main-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Main Parameters:
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#secondary-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Secondary Parameters
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#the-rivtree-structure" class="md-nav__link">
+    <span class="md-ellipsis">
+      The RivTree structure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#built-in-irfs-and-expected-parameters" class="md-nav__link">
+    <span class="md-ellipsis">
+      Built-in IRFs and expected parameters
+    </span>
+  </a>
+  
+    <nav class="md-nav" aria-label="Built-in IRFs and expected parameters">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#registering-custom-routing-schemes" class="md-nav__link">
+    <span class="md-ellipsis">
+      Registering custom routing schemes
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#internals-of-the-routing-procedure" class="md-nav__link">
+    <span class="md-ellipsis">
+      Internals of the routing procedure
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#dynamic-parameter-inputs" class="md-nav__link">
+    <span class="md-ellipsis">
+      Dynamic parameter inputs
+    </span>
+  </a>
+  
+</li>
+      
+    </ul>
+  
+</nav>
+                  </div>
+                </div>
+              </div>
+            
+          
+          
+            <div class="md-content" data-md-component="content">
+              <article class="md-content__inner md-typeset">
+                
+                  
+
+
+
+<h1 id="basic-routing">Basic Routing<a class="headerlink" href="#basic-routing" title="Permanent link">&para;</a></h1>
+<p>Routing in DiffRoute is done by the forward function of the <code>LTIRouter</code> PyTorch module, which takes a <code>torch.Tensor</code> runoff and a <code>RivTree</code> description of the basin as inputs to compute an output routed <code>torch.Tensor</code> discharge. 
+<code>LTIRouter</code> is configured at initialization with routing hyper-parameters. 
+<code>RivTree</code> wraps a NetworkX <code>DiGraph</code> and the corresponding per-channel parameters in a GPU-ready format.</p>
+<p>This page builds on the Quickstart snippet with richer context: first dissecting the main router hyper-parameters, then detailing the <code>RivTree</code> structure, before walking through the internal execution stages that turn runoff into discharge.</p>
+<p>The router combines two internal phases: (1) it aggregates per-channel impulse response functions (IRFs) into a sparse routing kernel, and (2) it applies a causal block-sparse convolution against runoff time series. The sections below expand on each step with practical code snippets and configuration guidance.</p>
+<h2 id="core-example">Core example<a class="headerlink" href="#core-example" title="Permanent link">&para;</a></h2>
+<p>The canonical example shared in the <strong>Overview</strong> and <strong>Quickstart</strong> pages forms the foundation for the more advanced notes below.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span> <span class="nn">numpy</span> <span class="k">as</span> <span class="nn">np</span>
+<span class="kn">import</span> <span class="nn">pandas</span> <span class="k">as</span> <span class="nn">pd</span>
+<span class="kn">import</span> <span class="nn">networkx</span> <span class="k">as</span> <span class="nn">nx</span>
+<span class="kn">import</span> <span class="nn">torch</span>
+
+<span class="kn">from</span> <span class="nn">diffroute</span> <span class="kn">import</span> <span class="n">RivTree</span><span class="p">,</span> <span class="n">LTIRouter</span>
+
+<span class="n">b</span> <span class="o">=</span> <span class="mi">2</span>
+<span class="n">n</span> <span class="o">=</span> <span class="mi">20</span>
+<span class="n">T</span> <span class="o">=</span> <span class="mi">100</span>
+<span class="n">device</span> <span class="o">=</span> <span class="s2">&quot;cuda:0&quot;</span>
+
+<span class="n">G</span> <span class="o">=</span> <span class="n">nx</span><span class="o">.</span><span class="n">gn_graph</span><span class="p">(</span><span class="n">n</span><span class="p">)</span>
+<span class="n">params</span> <span class="o">=</span> <span class="n">pd</span><span class="o">.</span><span class="n">DataFrame</span><span class="p">({</span><span class="s2">&quot;tau&quot;</span><span class="p">:</span> <span class="n">np</span><span class="o">.</span><span class="n">random</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">n</span><span class="p">)},</span> <span class="n">index</span><span class="o">=</span><span class="n">G</span><span class="o">.</span><span class="n">nodes</span><span class="p">)</span>
+
+<span class="n">riv_tree</span> <span class="o">=</span> <span class="n">RivTree</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="n">params</span><span class="p">,</span> <span class="n">irf_fn</span><span class="o">=</span><span class="s2">&quot;linear_storage&quot;</span><span class="p">)</span><span class="o">.</span><span class="n">to</span><span class="p">(</span><span class="n">device</span><span class="p">)</span>
+<span class="n">router</span> <span class="o">=</span> <span class="n">LTIRouter</span><span class="p">(</span><span class="n">max_delay</span><span class="o">=</span><span class="mi">48</span><span class="p">,</span> <span class="n">dt</span><span class="o">=</span><span class="mi">1</span><span class="p">)</span>
+
+<span class="n">runoff</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">rand</span><span class="p">(</span><span class="n">b</span><span class="p">,</span> <span class="n">n</span><span class="p">,</span> <span class="n">T</span><span class="p">,</span> <span class="n">device</span><span class="o">=</span><span class="n">device</span><span class="p">)</span>
+<span class="n">discharge</span> <span class="o">=</span> <span class="n">router</span><span class="p">(</span><span class="n">runoff</span><span class="p">,</span> <span class="n">riv_tree</span><span class="p">)</span>
+</code></pre></div>
+<p>This snippet builds a synthetic tree, attaches channel-level parameters, constructs a routing kernel once, and applies it to batched runoff in a differentiable manner. Replace the toy graph, parameter table, or device selection to match your own workflow.</p>
+<h2 id="the-ltirouter-module">The LTIRouter module<a class="headerlink" href="#the-ltirouter-module" title="Permanent link">&para;</a></h2>
+<h3 id="main-parameters">Main Parameters:<a class="headerlink" href="#main-parameters" title="Permanent link">&para;</a></h3>
+<p>Two knobs govern most routing behaviour:</p>
+<ul>
+<li><code>max_delay</code>: Temporal support (expressed in routing steps) for the aggregated kernel. Set it large enough to cover the slowest travel time across your basin; anything shorter risks truncating downstream contributions.</li>
+<li><code>dt</code>: Ratio between the routing resolution and the native runoff resolution. With daily runoff, <code>dt = 1.0</code> keeps routing daily, while <code>dt = 1.0 / 24</code> lifts the computation to hourly resolution before optionally downsampling.</li>
+</ul>
+<h3 id="secondary-parameters">Secondary Parameters<a class="headerlink" href="#secondary-parameters" title="Permanent link">&para;</a></h3>
+<p>Additional hyper-parameters are available for specialised tuning, but their defaults usually perform well:</p>
+<ul>
+<li><code>cascade</code>: Integer repeat count that cascades the IRF to emulate multi-reservoir responses.</li>
+<li><code>block_size</code>: Channel block size used when converting the sparse kernel to block-sparse form. Align this with your GPU’s preferred tile size; the default value of 16 is a safe baseline.</li>
+<li><code>sampling_mode</code>: Strategy used by the <code>SubResolutionSampler</code> to reduce high-resolution kernels back to native resolution. <code>avg</code> emits window averages, while <code>sample</code> returns the last sample of each window.</li>
+<li><code>block_f</code>: Controls the frequency-domain aggregation batch size (FFT plus transitive closure). Larger values reduce kernel assembly passes at the expense of memory.</li>
+<li><code>include_index_diag</code> (defined on <code>RivTree</code>): When <code>False</code>, routed discharge is added to the original runoff, effectively including identity links. Leave it at <code>True</code> unless you explicitly need cumulative routing.</li>
+</ul>
+<h2 id="the-rivtree-structure">The RivTree structure<a class="headerlink" href="#the-rivtree-structure" title="Permanent link">&para;</a></h2>
+<p><code>RivTree</code> materialises the river network in tensor form so the router can consume it efficiently. Instantiating a <code>RivTree</code> looks like:</p>
+<div class="highlight"><pre><span></span><code><span class="n">riv_tree</span> <span class="o">=</span> <span class="n">RivTree</span><span class="p">(</span><span class="n">G</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="n">params</span><span class="p">,</span> <span class="n">irf_fn</span><span class="o">=</span><span class="s2">&quot;linear_storage&quot;</span><span class="p">)</span>
+</code></pre></div>
+<p>The <code>params</code> DataFrame must expose one column per IRF parameter required by the selected <code>irf_fn</code>. The authoritative list lives in <code>diffroute.irfs.IRF_PARAMS</code> and is summarised in the table below.</p>
+<p>Internally, <code>riv_tree</code> tracks three key tensors:</p>
+<ul>
+<li><code>riv_tree.nodes_idx</code>: <code>pandas.Series</code> mapping each NetworkX node label to a contiguous integer. Reorder runoff tensors according to this mapping before routing.</li>
+<li><code>riv_tree.edges</code>: <code>torch.Tensor</code> that stores the downstream successor indices for each channel in traversal order. The router uses it to build transitive closures.</li>
+<li><code>riv_tree.params</code>: <code>torch.Tensor</code> shaped <code>[n_channels, n_params]</code> containing the parameter matrix ordered consistently with <code>nodes_idx</code>.</li>
+</ul>
+<p>Additional buffers such as <code>riv_tree.path_cumsum</code> cache prefix sums used during block-sparse assembly, eliminating repeated graph traversals at execution time.</p>
+<h2 id="built-in-irfs-and-expected-parameters">Built-in IRFs and expected parameters<a class="headerlink" href="#built-in-irfs-and-expected-parameters" title="Permanent link">&para;</a></h2>
+<p>DiffRoute ships the following IRFs in <code>diffroute.irfs</code>. 
+Each channel in your river graph must provide the parameter vector listed here. 
+Parameters can be stored directly on NetworkX nodes (as in the quickstart) or supplied via a <code>pandas.DataFrame</code>.</p>
+<table>
+<thead>
+<tr>
+<th>IRF name</th>
+<th>Description</th>
+<th>Expected parameters</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>pure_lag</code></td>
+<td>Unit hydrograph that delays runoff without attenuation</td>
+<td><code>delay</code></td>
+</tr>
+<tr>
+<td><code>linear_storage</code></td>
+<td>Discrete linear reservoir</td>
+<td><code>tau</code></td>
+</tr>
+<tr>
+<td><code>nash_cascade</code></td>
+<td>Closed-form cascade of <code>n</code> linear reservoirs (<code>n</code> set in <code>cascade</code>)</td>
+<td><code>tau</code></td>
+</tr>
+<tr>
+<td><code>muskingum</code></td>
+<td>Classical Muskingum channel routing</td>
+<td><code>x</code>, <code>k</code></td>
+</tr>
+<tr>
+<td><code>hayami</code></td>
+<td>Hayami diffusion wave approximation</td>
+<td><code>D</code> (diffusivity), <code>L</code> (channel length), <code>c</code> (wave celerity)</td>
+</tr>
+</tbody>
+</table>
+<h3 id="registering-custom-routing-schemes">Registering custom routing schemes<a class="headerlink" href="#registering-custom-routing-schemes" title="Permanent link">&para;</a></h3>
+<p><code>diffroute</code> suports easy integration of new custom LTI routing scheme through the <code>diffroute.irfs.register_irf(name, func, params)</code> utility function.
+This utility function takes as imput:</p>
+<ul>
+<li><code>name</code>: a string identifier to be passed to the <code>irf_fn</code> attribute of the <code>RivTree</code> initialization.</li>
+<li><code>func</code>: a callable that accepts <code>(params, time_window, dt)</code> and returns kernels shaped <code>[n_channels, window]</code></li>
+<li><code>params</code>: a tuple of string describing the per-channel routing parameter of the routing scheme to register (i.e. (<code>x</code>, <code>k</code>) for the Muskingum scheme)</li>
+</ul>
+<p>A <a href="examples/custom_irf.md">tutorial notebook</a> is provided showing the XXX. </p>
+<h2 id="internals-of-the-routing-procedure">Internals of the routing procedure<a class="headerlink" href="#internals-of-the-routing-procedure" title="Permanent link">&para;</a></h2>
+<p>The forward function of <code>LTIRouter</code> is intentionally compact:</p>
+<div class="highlight"><pre><span></span><code>def forward(self, runoff, riv_tree, params=None):
+    kernel = self.aggregator(riv_tree, params)
+    block_sparse = kernel.to_block_sparse(self.block_size)
+    discharge = self.conv(runoff, block_sparse)
+    return discharge if riv_tree.include_index_diag else runoff + discharge
+</code></pre></div>
+<p>Execution proceeds in three stages:</p>
+<ul>
+<li>(i) <strong>IRF aggregation</strong>: gathers per-channel kernels, applies routing parameters (including optional overrides), and accumulates path responses into a sparse tensor.</li>
+<li>(ii) <strong>Block-sparse conversion</strong>: slices the aggregated kernel into GPU-friendly tiles controlled by <code>block_size</code>, caching the layout for fast re-use.</li>
+<li>(iii) <strong>Block-sparse convolution</strong>: multiplies the cached tiles against runoff tensors to generate routed discharge, optionally adding the original runoff if self-links are excluded.</li>
+</ul>
+<p>For research and development purposes, one can introspect the routing kernel produced by the aggregator before it is converted to block-sparse form.</p>
+<div class="highlight"><pre><span></span><code><span class="kn">import</span> <span class="nn">matplotlib.pyplot</span> <span class="k">as</span> <span class="nn">plt</span>
+
+<span class="n">kernel</span> <span class="o">=</span> <span class="n">router</span><span class="o">.</span><span class="n">aggregator</span><span class="p">(</span><span class="n">riv_tree</span><span class="p">)</span>
+<span class="c1"># Show size of the sparse kernel.</span>
+<span class="nb">print</span><span class="p">(</span><span class="n">kernel</span><span class="o">.</span><span class="n">size</span><span class="p">,</span> <span class="n">kernel</span><span class="o">.</span><span class="n">coords</span><span class="o">.</span><span class="n">shape</span><span class="p">,</span> <span class="n">kernel</span><span class="o">.</span><span class="n">values</span><span class="o">.</span><span class="n">shape</span><span class="p">)</span>
+
+<span class="n">dense_kernel</span> <span class="o">=</span> <span class="n">kernel</span><span class="o">.</span><span class="n">to_dense</span><span class="p">()</span>
+<span class="n">irf</span> <span class="o">=</span> <span class="n">dense_kernel</span><span class="p">[</span><span class="mi">1</span><span class="p">,</span><span class="mi">0</span><span class="p">]</span> <span class="c1"># Path-transverse IRF from node 0 to node 1</span>
+<span class="n">plt</span><span class="o">.</span><span class="n">plot</span><span class="p">(</span><span class="n">irf</span><span class="p">)</span> <span class="c1"># Plot the IRF</span>
+</code></pre></div>
+<p>This is useful when debugging sparse connectivity, verifying kernel support, or exporting the kernel to custom tooling.</p>
+<h2 id="dynamic-parameter-inputs">Dynamic parameter inputs<a class="headerlink" href="#dynamic-parameter-inputs" title="Permanent link">&para;</a></h2>
+<p><code>RivTree</code> stores per-channel routing parameters in the tensor <code>riv_tree.params</code>, ordered exactly like <code>riv_tree.nodes_idx</code>. You can populate these values either by attaching attributes to your NetworkX graph or by supplying a <code>pandas.DataFrame</code> at construction time.</p>
+<p>Static routing scenarios can rely on the parameters embedded in the <code>RivTree</code>, but differentiable calibration often benefits from injecting learnable tensors into the forward pass.</p>
+<div class="highlight"><pre><span></span><code><span class="c1"># Build a learnable tensor aligned with riv_tree.nodes_idx.</span>
+<span class="n">learnable_tau</span> <span class="o">=</span> <span class="n">torch</span><span class="o">.</span><span class="n">nn</span><span class="o">.</span><span class="n">Parameter</span><span class="p">(</span><span class="n">riv_tree</span><span class="o">.</span><span class="n">params</span><span class="o">.</span><span class="n">clone</span><span class="p">())</span>
+
+<span class="c1"># Route with dynamic parameters (must follow the node ordering)</span>
+<span class="n">discharge</span> <span class="o">=</span> <span class="n">router</span><span class="p">(</span><span class="n">runoff</span><span class="p">,</span> <span class="n">riv_tree</span><span class="p">,</span> <span class="n">params</span><span class="o">=</span><span class="n">learnable_tau</span><span class="p">)</span>
+</code></pre></div>
+<p>As long as the tensor matches the shape and ordering dictated by <code>riv_tree.nodes_idx</code>, the aggregator swaps it in for the stored parameters. Refer to the <strong>Data Structures</strong> page for a deeper dive into <code>RivTree</code>, node ordering, and parameter handling, and explore <code>diffhydro</code> if you need end-to-end calibration workflows.</p>
+
+
+
+
+
+
+
+
+
+
+
+
+                
+              </article>
+            </div>
+          
+          
+<script>var target=document.getElementById(location.hash.slice(1));target&&target.name&&(target.checked=target.name.startsWith("__tabbed_"))</script>
+        </div>
+        
+      </main>
+      
+        <footer class="md-footer">
+  
+  <div class="md-footer-meta md-typeset">
+    <div class="md-footer-meta__inner md-grid">
+      <div class="md-copyright">
+  
+  
+    Made with
+    <a href="https://squidfunk.github.io/mkdocs-material/" target="_blank" rel="noopener">
+      Material for MkDocs
+    </a>
+  
+</div>
+      
+    </div>
+  </div>
+</footer>
+      
+    </div>
+    <div class="md-dialog" data-md-component="dialog">
+      <div class="md-dialog__inner md-typeset"></div>
+    </div>
+    
+    
+    
+      
+      <script id="__config" type="application/json">{"base": "../..", "features": ["content.code.copy"], "search": "../../assets/javascripts/workers/search.973d3a69.min.js", "tags": null, "translations": {"clipboard.copied": "Copied to clipboard", "clipboard.copy": "Copy to clipboard", "search.result.more.one": "1 more on this page", "search.result.more.other": "# more on this page", "search.result.none": "No matching documents", "search.result.one": "1 matching document", "search.result.other": "# matching documents", "search.result.placeholder": "Type to start searching", "search.result.term.missing": "Missing", "select.version": "Select version"}, "version": null}</script>
+    
+    
+      <script src="../../assets/javascripts/bundle.f55a23d4.min.js"></script>
+      
+        <script src="../../javascripts/mathjax.js"></script>
+      
+        <script src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"></script>
+      
+    
+  </body>
+</html>
