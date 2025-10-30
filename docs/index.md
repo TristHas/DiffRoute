@@ -87,9 +87,17 @@ This project is under early development efforts. Please be aware that some chang
 We appreciate all contributions, from reporting bugs to implementing new features. 
 Please use the [GitHub Issues](https://github.com/TristHas/DiffRoute/issues) for any contribution, comment or request.
 
-## License
+## License and citation
 
 This project is licensed under the terms of the MIT license.  
+
+The motivation for, mathematical derivations behind, and illustrative use-cases of DiffRoute are presented in the paper "Differentiable river routing for end-to-end learning of hydrological processes".
+
+> "Differentiable river routing for end-to-end learning of hydrological processes at diverse scales"  
+> ESS Open Archive . May 27, 2025.
+> DOI: 10.22541/essoar.174835108.87664030/v1
+
+If you use `diffroute` in your academic work, please cite the above reference.
 
 ## Next
 
