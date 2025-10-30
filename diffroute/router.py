@@ -12,28 +12,26 @@ class LTIRouter(nn.Module):
     """
     def __init__(self,
                  max_delay=100, 
-                 block_size=16,
-                 irf_fn="linear_storage", 
-                 dt=1, cascade=1,
+                 dt=1,
                  sampling_mode="avg",
+                 block_size=16,
                  block_f=128,
+                 cascade=1,
                  **kwargs):
         """Initialize the router with aggregation and convolution settings.
 
         Args:
             max_delay (int): Maximum impulse response length in time-steps.
-            block_size (int): Spatial block size used for block-sparse kernels.
-            irf_fn (str): Name of the registered IRF used by the aggregator.
             dt (float): Temporal resolution of the runoff inputs.
-            cascade (int): Number of cascaded IRFs combined by the aggregator.
             sampling_mode (str): Strategy for sampling cascade parameters.
+            block_size (int): Spatial block size used for block-sparse kernels.
             block_f (int): Hidden dimensionality for kernel factorization.
+            cascade (int): Number of cascaded IRFs combined by the aggregator.
             **kwargs: Unused keyword arguments kept for legacy compatibility.
         """
         super().__init__()
         self.block_size = block_size
         self.aggregator = IRFAggregator(max_delay=max_delay, 
-                                        #block_size=block_size,
                                         dt=dt, cascade=cascade, 
                                         sampling_mode=sampling_mode,
                                         block_f=block_f)

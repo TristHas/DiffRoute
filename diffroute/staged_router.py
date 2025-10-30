@@ -18,21 +18,21 @@ class LTIStagedRouter(nn.Module):
     def __init__(
         self,
         max_delay: int = 32,
+        dt: float = 1.0,
+        sampling_mode: str = "avg",
         block_size: int = 16,
         block_f: int = 128,
-        dt: float = 1.0,
         cascade: int = 1,
-        sampling_mode: str = "avg",
     ) -> None:
         """Configure the staged router and construct its base LTI model.
 
         Args:
             max_delay (int): Maximum impulse response length in time-steps.
+            dt (float): Temporal resolution of the runoff inputs.
+            sampling_mode (str): Strategy for sampling cascade parameters.
             block_size (int | None): Optional override for kernel block size.
             block_f (int): Hidden dimensionality for kernel factorization.
-            dt (float): Temporal resolution of the runoff inputs.
             cascade (int): Number of cascaded IRFs combined by the aggregator.
-            sampling_mode (str): Strategy for sampling cascade parameters.
         """
         super().__init__()
         self.model = LTIRouter(max_delay=max_delay, 
