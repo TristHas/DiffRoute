@@ -1,4 +1,6 @@
-from imports import *
+import networkx as nx
+import torch
+from torch import nn
 
 from .index_precompute import INDEX_PRECOMPUTE
 from .scatter_reduce import IRF_AGGREGATE_FN
