@@ -96,7 +96,7 @@ def read_multiple_rapid_graphs(vpu_roots, plength_thr=None, node_thr=None, **rap
         RivTree | RivTreeCluster: Composite river tree or clustered variant for
         the provided VPUs.
     """
-    gs, params = _read_multiple_rapid_graphs(vpu_roots, **rapid_kwargs)
+    g, params = _read_multiple_rapid_graphs(vpu_roots, **rapid_kwargs)
     
     if (plength_thr is not None) and (node_thr is not None):
         clusters_g, node_transfer = define_schedule(g, plength_thr=plength_thr, 
