@@ -62,7 +62,7 @@ def irf_kernel_linear_diffusion(param, time_window=20, dt=1, eps=.01):
     """
     L_vals, D_vals, c_vals = param[:, 0], param[:, 1], param[:, 2]
     extended_time_steps = time_window * int(1/dt)
-    t_array = torch.arange(1, extended_time_steps+1, device=L_vals.device, dtype=L_vals.dtype) * dt + eps
+    t_array = torch.arange(1, extended_time_steps+1, device=L_vals.device, dtype=L_vals.dtype) * dt 
     L_exp, D_exp, c_exp = L_vals.unsqueeze(1), D_vals.unsqueeze(1), c_vals.unsqueeze(1)
     t_exp = t_array.unsqueeze(0)
     # Hayami formula
