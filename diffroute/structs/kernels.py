@@ -11,6 +11,7 @@ class SparseKernel(nn.Module):
             vals (torch.Tensor): Kernel values aligned with `coords` `[N, ks]`.
             size (Tuple[int, int, int]): Height, width, and kernel length.
         """
+        super().__init__()
         self.coords = coords
         self.vals = vals
         self.size = size
@@ -22,7 +23,7 @@ class SparseKernel(nn.Module):
     def to_dense(self):
         """Materialize the sparse kernel as a dense tensor."""
         dense = torch.zeros(self.size, dtype=self.vals.dtype, device=self.vals.device)
-        flat_idx = coords[:, 0] * W + coords[:, 1]
+        flat_idx = self.coords[:, 0] * W + self.coords[:, 1]
         dense.view(-1, ks).index_add_(0, flat_idx, self.vals)
         return dense
         
