@@ -7,7 +7,7 @@ import torch
 import torch.nn as nn
 
 from .router import LTIRouter
-from .ops import write_slice
+from .ops import write_slice, index_add_inplace
 
 class LTIStagedRouter(nn.Module):
     """Staged router that orchestrates block-sparse routing over clusters.
@@ -63,7 +63,8 @@ class LTIStagedRouter(nn.Module):
         if transfer_bucket is None or cluster_idx not in gs.src_transfer:
             return transfer_bucket
         src_idx, g_idx = gs.src_transfer[cluster_idx] 
-        transfer_bucket = transfer_bucket.index_add(1, g_idx, discharge[:, src_idx])
+        #transfer_bucket = transfer_bucket.index_add(1, g_idx, discharge[:, src_idx])
+        transfer_bucket = index_add_inplace(transfer_bucket, g_idx, discharge[:, src_idx], dim=1)
         return transfer_bucket
 
     def route_one_cluster(self, runoff: torch.Tensor, gs, cluster_idx: int,
