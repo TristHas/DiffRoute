@@ -49,7 +49,7 @@ class RivTree(nn.Module):
                 by node indices; if `None`, parameters are read from `self.g`.
         """
         if param_names is None:
-            param_names = IRF_PARAMS[model_name]
+            param_names = IRF_PARAMS[self.irf_fn]
         params = init_params_from_g(self.g, self.irf_fn, param_names, self.nodes_idx) \
                 if param_df is None\
                 else init_params_from_df(param_df, self.irf_fn, param_names, self.nodes_idx)            
