@@ -17,11 +17,6 @@ def block_sparse_conv_1d_fwd_kernel(
     N_NONZERO_BLOCKS: tl.int32,
     NZB_BLOCK_SIZE: tl.constexpr,
 ):
-    """
-    x_ptr  layout: [B, n_in_blocks,  T, BLOCK_SIZE_M]
-    y_ptr  layout: [B, n_out_blocks, T, BLOCK_SIZE_M]
-    values layout: [Nnz, K, BLOCK_SIZE_M, BLOCK_SIZE_M]  (out_sub, in_sub)
-    """
     # ------------------------------------------------------------
     # Program-IDs
     # ------------------------------------------------------------
@@ -41,6 +36,11 @@ def block_sparse_conv_1d_fwd_kernel(
     x_base = x_ptr + b_idx * in_batch_stride
     y_base = y_ptr + b_idx * out_batch_stride
 
+    # Infer output dtype from y (works for fp16/fp32)
+    # mask=False is OK; we just need dtype, the value doesn't matter.
+    y0 = tl.load(y_base, mask=False, other=0)
+    y_dtype = y0.dtype
+
     # ------------------------------------------------------------
     # Time tile indexes
     # ------------------------------------------------------------
@@ -51,8 +51,8 @@ def block_sparse_conv_1d_fwd_kernel(
     out_idx = tl.arange(0, BLOCK_SIZE_M)[:, None]   # (M,1)
     in_idx  = tl.arange(0, BLOCK_SIZE_M)[None, :]   # (1,M)
 
-    # Group accumulator (handles consecutive blocks with same r_block)
-    group_acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32)
+    # Group accumulator: FP32 accumulation
+    group_acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
     group_active = False
     prev_r_block = 0
 
@@ -69,7 +69,8 @@ def block_sparse_conv_1d_fwd_kernel(
             x_block_off = c_block * in_block_stride
             block_weight_base = nzb * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
 
-            tile_acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), tl.float32)
+            # Tile accumulator: FP32 accumulation
+            tile_acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
 
             # ----------------------------------------------------
             # Sum over kernel taps
@@ -77,18 +78,24 @@ def block_sparse_conv_1d_fwd_kernel(
             for k in range(KERNEL_SIZE):
                 w_k_off = block_weight_base + k * (BLOCK_SIZE_M * BLOCK_SIZE_M)
                 w_idx   = w_k_off + out_idx * BLOCK_SIZE_M + in_idx
-                kernel_vals = tl.load(values_ptr + w_idx, mask=True, other=0.0)
+
+                # Load weights, promote to FP32 for accumulation
+                w = tl.load(values_ptr + w_idx, mask=True, other=0.0).to(tl.float32)
 
                 t_in = t_range + k - (KERNEL_SIZE - 1)
                 in_time_valid = (t_in >= 0) & (t_in < n_time_steps)
+
                 x_ptrs = (
                     x_base
                     + x_block_off
                     + (t_in * BLOCK_SIZE_M)[None, :]
-                    + out_idx  # NOTE: out_idx used simply for row index 0..M-1
+                    + out_idx
                 )
-                x_vals = tl.load(x_ptrs, mask=in_time_valid[None, :], other=0.0)
-                tile_acc += tl.dot(kernel_vals, x_vals)
+
+                # Load activations, promote to FP32 for accumulation
+                x = tl.load(x_ptrs, mask=in_time_valid[None, :], other=0.0).to(tl.float32)
+
+                tile_acc += tl.dot(w, x)  # FP32 accumulate
 
             # ----------------------------------------------------
             # Group reduction on identical r_block
@@ -101,19 +108,18 @@ def block_sparse_conv_1d_fwd_kernel(
                 if r_block == prev_r_block:
                     group_acc += tile_acc
                 else:
-                    # commit previous group
+                    # commit previous group (cast to y dtype right before atomic)
                     y_ptrs = (
                         y_base
                         + prev_r_block * out_block_stride
                         + t_offset_out[None, :]
                         + out_idx
                     )
-                    tl.atomic_add(y_ptrs, group_acc, mask=t_mask[None, :])
+                    tl.atomic_add(y_ptrs, group_acc.to(y_dtype), mask=t_mask[None, :])
 
                     # start new group
                     group_acc = tile_acc
                     prev_r_block = r_block
-    # end for i
 
     # Final commit
     if group_active:
@@ -123,7 +129,8 @@ def block_sparse_conv_1d_fwd_kernel(
             + t_offset_out[None, :]
             + out_idx
         )
-        tl.atomic_add(y_ptrs, group_acc, mask=t_mask[None, :])
+        tl.atomic_add(y_ptrs, group_acc.to(y_dtype), mask=t_mask[None, :])
+
 
 # ------------------------------------------------------------
 # Backward - dx kernel

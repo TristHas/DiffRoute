@@ -55,7 +55,7 @@ class LTIRouter(nn.Module):
         """
         if runoff.ndim != 3: raise ValueError(f"runoff must be [B, C, T], got {runoff.shape}")
         # Stage 1: Aggregate kernel
-        kernel = self.aggregator(g, params)
+        kernel = self.aggregator(g, params).to(runoff.device)
         kernel = kernel.to_block_sparse(self.block_size)
         # Stage 2: Convolution
         y = self.conv(runoff, kernel)
