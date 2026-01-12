@@ -68,6 +68,7 @@ class RivTreeCluster(nn.Module):
                  irf_fn=None, 
                  include_index_diag=True,
                  param_df=None,
+                 param_names=None,
                  nodes_idx=None):
         """Assemble clustered river networks and transfer bookkeeping.
 
@@ -85,6 +86,7 @@ class RivTreeCluster(nn.Module):
         self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
                                          include_index_diag=include_index_diag,
                                          param_df=param_df,
+                                         param_names=param_names,
                                          nodes_idx=nodes_idx[i]) \
                                  for i,g in enumerate(tqdm(clusters_g))])
         self.node_transfer = node_transfer
