@@ -12,8 +12,8 @@ class SparseKernel(nn.Module):
             size (Tuple[int, int, int]): Height, width, and kernel length.
         """
         super().__init__()
-        self.coords = coords
-        self.vals = vals
+        self.register_buffer("coords", coords)  # [n_blocks, 2]
+        self.register_buffer("vals", vals)    # [n_blocks, block_size, block_size, ks]
         self.size = size
 
     def to_block_sparse(self, block_size):
