@@ -89,30 +89,31 @@ class LTIStagedRouter(nn.Module):
         transfer_bucket = self._store_outgoing(y_c, gs, cluster_idx, transfer_bucket)
         return y_c, transfer_bucket
 
-    def route_all_clusters(self, x: torch.Tensor, gs, params: List[Any] | None = None,
-                           display_progress: bool = False) -> torch.Tensor:
+    def route_all_clusters(self, x: torch.Tensor, 
+                           gs, 
+                           params: torch.Tensor | None = None,
+                           ) -> torch.Tensor:
         """Route all clusters sequentially and assemble the full discharge.
 
         Args:
             x (torch.Tensor): Full runoff tensor shaped `[B, N_nodes, T]`.
             gs: Clustered river structure with index metadata.
             params (List[Any] | None): Optional per-cluster parameter list.
-            display_progress (bool): Whether to wrap the loop with a tqdm bar.
 
         Returns:
             torch.Tensor: Routed discharge tensor shaped `[B, N_nodes, T]`.
         """
-        pbar = tqdm if display_progress else lambda y: y
-        if params is None: params = [None] * len(gs)
-
+        if params is None: params = gs.params
         transfer_bucket = self._init_transfer_bucket(x, gs)
         out = torch.empty(x.shape[0], len(gs.nodes_idx), x.shape[-1],
                           device=x.device, dtype=x.dtype)
 
         start = 0
-        for cid, param in enumerate(pbar(params)):
-            s, e = gs.node_ranges[cid, 0].item(), gs.node_ranges[cid, 1].item()
-            y_c, transfer_bucket = self.route_one_cluster(x[:,s:e], gs, cid, param, transfer_bucket)
+        for cid in range(len(gs)):
+            s, e = gs.node_ranges[cid]
+            y_c, transfer_bucket = self.route_one_cluster(x[:,s:e], gs, cid, 
+                                                          params[s:e],
+                                                          transfer_bucket)
             end = start + y_c.shape[1]
             out = write_slice(out, y_c, start, end)
             start = end
@@ -120,31 +121,27 @@ class LTIStagedRouter(nn.Module):
         return out 
 
     def route_all_clusters_yield(self, xs: List[torch.Tensor], gs, 
-                                 params: List[Any] | None = None,
-                                 display_progress: bool = False):
+                                 params: List[Any] | None = None):
         """Yield per-cluster discharges lazily for streamed routing.
 
         Args:
             xs (List[torch.Tensor]): Sequence of cluster runoff tensors.
             gs: Clustered river structure with transfer metadata.
             params (List[Any] | None): Optional per-cluster parameter list.
-            display_progress (bool): Whether to wrap iteration in tqdm.
 
         Yields:
             torch.Tensor: Discharge tensor for each cluster in order.
         """
-        pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
 
         transfer_bucket = None
-        for idx, (x_c, param) in enumerate(pbar(zip(xs, params))):
+        for idx, (x_c, param) in enumerate(zip(xs, params)):
             if idx == 0: transfer_bucket = self._init_transfer_bucket(x_c, gs)
             out_c, transfer_bucket = self.route_one_cluster(x_c, gs, idx, param, transfer_bucket)
             yield out_c  
 
     def init_upstream_discharges(self, xs: List[torch.Tensor], gs, cluster_idx: int,
-                                 params: List[Any] | None = None,
-                                 display_progress: bool = False) -> torch.Tensor:
+                                 params: List[Any] | None = None) -> torch.Tensor:
         """Warm up the staged router until the target cluster.
 
         Args:
@@ -152,16 +149,14 @@ class LTIStagedRouter(nn.Module):
             gs: Clustered river structure with transfer metadata.
             cluster_idx (int): Cluster index to stop before routing.
             params (List[Any] | None): Optional per-cluster parameter list.
-            display_progress (bool): Whether to wrap iteration in tqdm.
 
         Returns:
             torch.Tensor: Transfer bucket capturing upstream discharges.
         """
-        pbar = tqdm if display_progress else lambda y: y
         if params is None: params = [None] * len(gs)
         transfer_bucket = None
         
-        for idx, (x_c, param) in enumerate(pbar(zip(xs, params))):
+        for idx, (x_c, param) in enumerate(zip(xs, params)):
             if idx == 0: transfer_bucket = self._init_transfer_bucket(x_c, gs)
             if idx == cluster_idx: return transfer_bucket
             _, transfer_bucket = self.route_one_cluster(x_c, gs, idx, param, transfer_bucket)

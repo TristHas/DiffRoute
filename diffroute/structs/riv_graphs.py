@@ -83,6 +83,7 @@ class RivTreeCluster(nn.Module):
         """
         super().__init__()
         if nodes_idx is None: nodes_idx = [None]*len(clusters_g)
+        self.irf_fn = irf_fn
         self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
                                          include_index_diag=include_index_diag,
                                          param_df=param_df,
@@ -126,6 +127,10 @@ class RivTreeCluster(nn.Module):
     @property
     def nodes(self):
         return self.nodes_idx.index.values
+
+    @property
+    def params(self):
+        return torch.cat([g.params for g in self.gs])
 
 def init_node_idxs(g):
     """Derive a depth-first traversal ordering for nodes in the graph.
