@@ -22,6 +22,7 @@ class SparseKernel(nn.Module):
 
     def to_dense(self):
         """Materialize the sparse kernel as a dense tensor."""
+        H, W, ks = self.size
         dense = torch.zeros(self.size, dtype=self.vals.dtype, device=self.vals.device)
         flat_idx = self.coords[:, 0] * W + self.coords[:, 1]
         dense.view(-1, ks).index_add_(0, flat_idx, self.vals)
