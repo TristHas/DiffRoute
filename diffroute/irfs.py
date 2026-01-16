@@ -1,4 +1,5 @@
 import torch
+import math
 
 def irf_kernel_pure_lag(param, time_window=20, dt=1):
     """
@@ -54,31 +55,53 @@ def irf_kernel_muskingum(param, time_window=10, dt=1):
     kernel = mask_t0 * C0[:,None] + (1. - mask_t0)*h_tail
     return kernel
 
-def irf_kernel_linear_diffusion(param, time_window=20, dt=1, eps=.01):
+def irf_kernel_linear_diffusion(param, time_window=20, dt=1, eps=-90):
     """
         param[:,0] => L
         param[:,1] => D
         param[:,2] => c
     """
-    L_vals, D_vals, c_vals = param[:, 0], param[:, 1], param[:, 2]
-    extended_time_steps = time_window * int(1/dt)
-    t_array = torch.arange(1, extended_time_steps+1, device=L_vals.device, dtype=L_vals.dtype) * dt 
-    L_exp, D_exp, c_exp = L_vals.unsqueeze(1), D_vals.unsqueeze(1), c_vals.unsqueeze(1)
-    t_exp = t_array.unsqueeze(0)
+    L, D, c = [x.unsqueeze(-1) for x in param.t()]
+    t = torch.arange(1, time_window * int(1/dt)+1, 
+                     device=param.device, 
+                     dtype=param.dtype)[None] * dt 
     # Hayami formula
-    h_part = L_exp / (2.0 * torch.sqrt(torch.pi * D_exp * t_exp**3))
-    exponent = -((L_exp - c_exp * t_exp)**2) / (4.0 * D_exp * t_exp)
-    kernel = h_part * torch.exp(exponent)
+    h = L / (2.0 * torch.sqrt(torch.pi * D * t**3))
+    exponent = -((L - c * (t-dt))**2) / (4.0 * D * t)
+    # Needed for numerical accuracy, to avoid nans.
+    mins = torch.max(exponent,axis=1, keepdims=True).values.detach()
+    exponent_ = torch.where(mins > eps, exponent, exponent / mins * eps)
+    kernel = h * torch.exp(exponent_)
     # normalize
     kernel = kernel / kernel.sum(-1, keepdim=True)
     return kernel
 
+def irf_kernel_stable_hayami(param, time_window=20, dt=1.0):
+    """
+    """
+    L, D, c = [x.unsqueeze(-1) for x in param.t()]
+    t = torch.arange(1, int(time_window * (1/dt)) + 1, 
+                     device=param.device, 
+                     dtype=param.dtype)[None] * dt
+    # Hayami formula in log space
+    logh = torch.log(L)  \
+         - math.log(2.0) \
+         - 0.5 * (math.log(math.pi) \
+                  + torch.log(D) \
+                  + 3.0 * torch.log(t))
+    exponent = -((L - c * (t-dt)) ** 2) / (4.0 * D * t)
+    logk = logh + exponent
+    # Normalization
+    logk = logk - torch.logsumexp(logk, dim=-1, keepdim=True)
+    kernel = torch.exp(logk)
+    return kernel
+    
 IRF_FN = {
     "pure_lag": irf_kernel_pure_lag,
     "linear_storage": irf_kernel_linear_storage,
     "nash_cascade": irf_kernel_cascade_linear_storage,
     "muskingum": irf_kernel_muskingum,
-    "hayami": irf_kernel_linear_diffusion
+    "hayami": irf_kernel_stable_hayami #irf_kernel_linear_diffusion
 }
 
 IRF_PARAMS = {
