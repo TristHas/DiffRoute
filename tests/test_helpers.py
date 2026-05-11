@@ -49,7 +49,6 @@ def read_params(g, model):
 def gen_dense_k(g, time_window=10, model="muskingum", dt=1, **kwargs):
     params = read_params(g, model)
     base_irfs = IRF_FN[model](params, time_window=time_window, dt=dt, **kwargs)
-    #base_irfs = repeatedly_convolve(base_irfs, dt) 
     irfs = convolve_irfs(g, base_irfs, dt)
     kernel = irfs_to_dense_kernel(irfs, len(g), time_window, dt)
     return np.ascontiguousarray(np.flip(kernel, -1))
@@ -59,7 +58,7 @@ def gen_dense_k_subresolution(g, time_window, model="pure_lag", sample_mode="avg
     kernel = torch.tensor(kernel).view(-1, kernel.shape[-1]).float()
     w_d = SubResolutionSampler(dt, sample_mode).phi_k(kernel)
     w_d = w_d.view(len(g), len(g), time_window).numpy()
-    return w_d #/ dt
+    return w_d 
 
 @torch.no_grad()
 def run_dense_conv(x, g, model, time_window=10, dt=1, **kwargs):

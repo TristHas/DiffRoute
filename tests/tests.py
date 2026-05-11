@@ -19,7 +19,6 @@ def test_subresolution_conv_1_channel(sample_mode="avg", n_time_steps=80, time_w
     x_h = sampler.phi(x_d)
     
     w_h = torch.randn(1,time_window*M) 
-    #w_h = repeatedly_convolve(w_h, dt)
     w_d = sampler.phi_k(w_h)
     
     o_d = sampler.conv(x_d, w_d[None])
@@ -37,7 +36,6 @@ def test_subresolution_conv_multi_channel(sample_mode="avg", C=32, n_time_steps=
     x_h = sampler.phi(x_d)
     
     w_h = torch.randn(C,C,time_window*M) 
-    #w_h = repeatedly_convolve(w_h, dt)
     w_d = sampler.phi_k(w_h.view(C*C,-1)).view(C,C,-1)
 
     o_d = sampler.conv(x_d, w_d)
