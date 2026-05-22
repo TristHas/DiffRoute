@@ -1,5 +1,6 @@
 from imports import *
 from diffroute.utils import get_node_idxs
+from diffroute.irfs import irf_kernel_stable_hayami
 
 def init_model(g, runoff_inputs, num_timesteps):
     """
@@ -70,24 +71,6 @@ def linear_reservoir_model(runoff_inputs, g, num_timesteps, dt=1.0):
 
 def nash_cascade_model(runoff_inputs, g, num_timesteps=None, n=3, dt=1.0):
     num_timesteps, node_to_idx, discharge = init_model(g, runoff_inputs, num_timesteps)
-    state = np.zeros_like(runoff_inputs)
-    
-    for t in range(num_timesteps):
-        for node in nx.topological_sort(g):
-            idx = node_to_idx[node]
-            upstream = sum(discharge[node_to_idx[pred], t] for pred in g.predecessors(node))
-            inflow = runoff_inputs[idx, t] + upstream
-            Q_in = inflow
-            for i in range(n):
-                tau = g.nodes[node]["tau"]
-                Q = (state[idx, i] + Q_in*dt) / (1+ dt/tau)
-                state[idx, i] = state[idx, i] + Q_in*dt - Q*dt
-                Q_in = Q
-            discharge[idx, t] = Q_in
-    return discharge
-
-def nash_cascade_model(runoff_inputs, g, num_timesteps=None, n=3, dt=1.0):
-    num_timesteps, node_to_idx, discharge = init_model(g, runoff_inputs, num_timesteps)
     state = np.zeros((runoff_inputs.shape[0], n))
     
     for t in range(num_timesteps):
@@ -145,19 +128,17 @@ def linear_diffuse_model(runoff_inputs, g, num_timesteps=None, dt=1.0):
     This version updates discharge at every time step so that
     upstream contributions are properly propagated.
     """
-    num_timesteps, node_to_idx, inflow, discharge = init_model(g, runoff_inputs, num_timesteps)
+    num_timesteps, node_to_idx, discharge = init_model(g, runoff_inputs, num_timesteps)
+    inflow = np.zeros_like(runoff_inputs)
 
     # Precompute each node's diffusion IRF (in natural/casual order)
     kernels = {}
-    for node in node_list:
+    for node in g.nodes():
         L = g.nodes[node]["L"]
         D = g.nodes[node]["D"]
         c = g.nodes[node]["c"]
-        # Compute IRF kernel (h[0]=0, h[1:] from the Hayami formula)
-        L_tensor = torch.tensor([L], dtype=torch.float32)
-        D_tensor = torch.tensor([D], dtype=torch.float32)
-        c_tensor = torch.tensor([c], dtype=torch.float32)
-        kernel = irf_kernel_linear_diffusion(L_tensor, D_tensor, c_tensor, time_window=num_timesteps, dt=dt)
+        param = torch.tensor([[L, D, c]], dtype=torch.float32)
+        kernel = irf_kernel_stable_hayami(param, time_window=num_timesteps, dt=dt)
         # Keep the kernel in natural (causal) order.
         kernels[node] = kernel.numpy().flatten()
 

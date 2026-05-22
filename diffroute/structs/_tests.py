@@ -1,11 +1,11 @@
 import torch
 from .kernels import BlockSparseKernel
 
-def _roundtrip_equal(bst: BlockSparseTensor):
+def _roundtrip_equal(bst: BlockSparseKernel):
     """Check that to_coo -> from_coo -> to_dense reproduces the original dense tensor."""
     dense_original = bst.to_dense()
     coords, values = bst.to_coo(drop_zero_rows=True)
-    bst2 = BlockSparseTensor.from_coo(coords, values, block_size=bst.block_size, size=bst.size)
+    bst2 = BlockSparseKernel.from_coo(coords, values, block_size=bst.block_size, size=bst.size)
     dense_reconstructed = bst2.to_dense()
     torch.testing.assert_close(dense_reconstructed, dense_original)
 
@@ -36,7 +36,7 @@ def test_random_roundtrip(device="cpu", seed=0):
     mask_zero = torch.rand_like(block_values[..., 0]) < 0.15  # 15% chance a (n,b,b) position is zero across ks
     block_values[mask_zero] = 0
 
-    bst = BlockSparseTensor(block_indices, block_values, B, size=(H, W, ks)).to(device)
+    bst = BlockSparseKernel(block_indices, block_values, B, size=(H, W, ks)).to(device)
     _roundtrip_equal(bst)
 
 def test_small_deterministic(device="cpu"):
@@ -58,5 +58,5 @@ def test_small_deterministic(device="cpu"):
     block_values[1, 0, 1, :] = torch.tensor([0., 8., 0.], device=device)   # (4,5)
     block_values[1, 1:, :, :] = 0  # rest won't fit anyway, but keep explicit
 
-    bst = BlockSparseTensor(block_indices, block_values, B, size=(H, W, ks)).to(device)
+    bst = BlockSparseKernel(block_indices, block_values, B, size=(H, W, ks)).to(device)
     _roundtrip_equal(bst)

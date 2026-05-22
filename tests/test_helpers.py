@@ -2,7 +2,7 @@ from imports import *
 
 from diffroute.utils import get_node_idxs
 from diffroute.irfs import IRF_FN
-from diffroute.agg.kernel_sampler import SubResolutionSampler
+from diffroute.agg.temporal_sampler import SubResolutionSampler
 
 IRF_PARAMS = {
         "pure_lag":["delay"],

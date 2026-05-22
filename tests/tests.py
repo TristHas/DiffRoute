@@ -1,7 +1,7 @@
 from imports import *
 
 from diffroute.agg.kernel_aggregator import RoutingIRFAggregator
-from diffroute.agg.kernel_sampler import SubResolutionSampler
+from diffroute.agg.temporal_sampler import SubResolutionSampler
 from diffroute import LTIRouter
 
 from .test_helpers import *
