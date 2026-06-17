@@ -40,25 +40,35 @@ class LTIRouter(nn.Module):
     def forward(self, runoff: torch.Tensor, g, params=None) -> torch.Tensor:
         """Compute routed discharge for a set of runoff inputs.
 
+        Any number of leading (batch-like) dimensions are supported: every
+        dimension before the trailing channel (node) and time dimensions is
+        merged into a single batch dimension for routing, then restored on the
+        output. So `[B, C, T]`, `[B, E, C, T]` (with an ensemble axis), etc. are
+        all accepted.
+
         Args:
-            runoff (torch.Tensor): Tensor shaped `[B, C, T]` with batch,
-                channel (node), and time dimensions.
+            runoff (torch.Tensor): Tensor shaped `[..., C, T]` with any number
+                of leading batch dimensions, then channel (node) and time.
             g (RivTree): River network containing kernel parameters.
             params (torch.Tensor | None): Optional per-cluster parameters;
                 defaults to attributes stored on `g`.
 
         Returns:
-            torch.Tensor: Routed discharge with shape `[B, C, T]`.
+            torch.Tensor: Routed discharge with the same shape as `runoff`.
 
         Raises:
-            ValueError: If `runoff` does not have three dimensions.
+            ValueError: If `runoff` has fewer than three dimensions.
         """
-        if runoff.ndim != 3: raise ValueError(f"runoff must be [B, C, T], got {runoff.shape}")
+        if runoff.ndim < 3:
+            raise ValueError(f"runoff must be [..., C, T] with at least one "
+                             f"leading batch dimension, got {runoff.shape}")
+        *lead, C, T = runoff.shape
+        x = runoff.contiguous().view(-1, C, T)            # merge leading dims -> [B, C, T]
         # Stage 1: Aggregate kernel
-        kernel = self.aggregator(g, params).to(runoff.device)
+        kernel = self.aggregator(g, params).to(x.device)
         kernel = kernel.to_block_sparse(self.block_size)
         # Stage 2: Convolution
-        y = self.conv(runoff, kernel)
+        y = self.conv(x, kernel)
         # Handle residual if needed
-        if not g.include_index_diag: y = runoff + y 
-        return y
+        if not g.include_index_diag: y = x + y
+        return y.reshape(*lead, C, T)                     # restore leading dims

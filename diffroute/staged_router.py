@@ -42,7 +42,20 @@ class LTIStagedRouter(nn.Module):
                                block_f=block_f)
 
     def forward(self, x: torch.Tensor, gs, params=None):
-        return self.route_all_clusters(x, gs, params) 
+        """Route runoff with any number of leading (batch-like) dimensions.
+
+        Every dimension before the trailing node and time dimensions is merged
+        into a single batch dimension for routing, then restored on the output.
+        So `[B, N, T]`, `[B, E, N, T]` (with an ensemble axis), etc. are all
+        accepted; the output keeps the same leading dimensions.
+        """
+        if x.ndim < 3:
+            raise ValueError(f"runoff must be [..., N, T] with at least one "
+                             f"leading batch dimension, got {x.shape}")
+        *lead, N, T = x.shape
+        x = x.contiguous().view(-1, N, T)                 # merge leading dims -> [B, N, T]
+        y = self.route_all_clusters(x, gs, params)        # [B, N_out, T]
+        return y.reshape(*lead, *y.shape[-2:])            # restore leading dims
     
     def _init_transfer_bucket(self, runoff: torch.Tensor, gs) -> torch.Tensor:
         return torch.zeros(runoff.shape[0], gs.tot_transfer, runoff.shape[-1],
