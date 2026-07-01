@@ -65,9 +65,7 @@ class IRFAggregator(nn.Module):
                                           include_index_diag=g.include_index_diag,
                                           block_f=self.block_f)
 
-        irfs_agg = torch.relu(irfs_agg)
-        irfs_agg = self.sampler.phi_k(irfs_agg).flip(-1)
-        irfs_agg /= irfs_agg.sum(-1, keepdims=True)
+        irfs_agg = self.sampler.kernel_postprocess(irfs_agg)
 
         kernel_size = (len(g), len(g), irfs_agg.shape[-1])
         return SparseKernel(coords, irfs_agg, kernel_size)

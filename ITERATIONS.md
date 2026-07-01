@@ -51,3 +51,13 @@
 - Runtime: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dw --trials 5 --warmup 2` reported `mean_ms=484.6630493164063`, `min_ms=484.6455993652344`.
 - Baseline comparison: committed isolated `dW` baseline was `mean_ms=663.871`, so the current default is `1.37x` faster and reduces latency by `27.0%`.
 - Notes: This setting is GB200-specific until the same sweep is run on A100/H100.
+
+## Iteration 6 - Fused aggregation postprocess backward
+
+- Target: aggregation backward through ReLU, triangular downsampling, flip, and normalization.
+- Hypothesis: Nsight Systems showed the largest aggregation-backward kernel was cuDNN grouped convolution input-gradient from the triangular downsampler, about 64 ms. A custom Triton backward can fuse normalization, flip, triangular downsample backward, and ReLU masking and avoid the cuDNN grouped-conv path.
+- Change: Added `_DownTriReluFlipNormalize` in `diffroute/agg/temporal_sampler.py` and routed CUDA avg-mode aggregation post-processing through it. Non-CUDA and non-avg modes keep the existing PyTorch sequence.
+- Correctness: Existing full correctness gate passed with `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2`. An explicit reference comparison against the old PyTorch post-processing sequence matched forward exactly and gave random-upstream parameter-gradient RMS error about `1.05e-4`.
+- Runtime: `T=500` full benchmark reported `substep.aggregation.backward.dL_dparams mean_ms=132.30342610677084`, median `124.12153625488281`; focused 7-trial aggregation timing reported mean `143.90956115722656`, median `140.2414093017578`, min `140.13885498046875`.
+- Baseline comparison: previous `T=500` aggregation backward was about `190.248 ms`, so the focused median is `1.36x` faster and the best full-benchmark median is about `1.51x` faster.
+- Notes: This optimizes the dominant post-processing kernel but leaves closure/prefix and FFT backward costs in place.
