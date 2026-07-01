@@ -61,3 +61,13 @@
 - Runtime: `T=500` full benchmark reported `substep.aggregation.backward.dL_dparams mean_ms=132.30342610677084`, median `124.12153625488281`; focused 7-trial aggregation timing reported mean `143.90956115722656`, median `140.2414093017578`, min `140.13885498046875`.
 - Baseline comparison: previous `T=500` aggregation backward was about `190.248 ms`, so the focused median is `1.36x` faster and the best full-benchmark median is about `1.51x` faster.
 - Notes: This optimizes the dominant post-processing kernel but leaves closure/prefix and FFT backward costs in place.
+
+## Iteration 7 - Prefix-sum backward via saved pointer jumps
+
+- Target: `prefix_sum` backward inside frequency-domain aggregation.
+- Hypothesis: Prefix forward already uses pointer jumping, but backward pushed gradients one graph edge per launch and needed about 357 launches for RAPID depth. Saving the forward jump tables and reversing those rounds should reduce the backward to the pointer-jump depth, about 9 launches.
+- Change: `PrefixSum.forward` now saves the per-round jump tables. `PrefixSum.backward` walks those tables in reverse, cloning the self contribution and using the existing Triton push kernel to propagate one jump distance per round.
+- Correctness: Exact small-graph checks against a PyTorch reference passed with backward max error below `8e-6`. The full RAPID correctness gate passed with `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2`.
+- Runtime: focused 7-trial aggregation backward timing reported mean `47.76411383492606`, median `44.222496032714844`, min `44.10697555541992`. `T=500` full benchmark reported `full.backward.dL_dparams mean_ms=43.57938130696615`, median `37.97795104980469`, and `substep.aggregation.backward.dL_dparams mean_ms=34.24970626831055`, median `26.134239196777344`.
+- Baseline comparison: before aggregation optimization, `T=500` full `dL/dparams` was about `200.596 ms`; after this iteration it is about `37.978 ms` median, a `5.28x` full-path speedup for short sequences.
+- Notes: The remaining aggregation backward cost is now split among closure backward, FFTs, and tensor elementwise/copy overhead rather than the previous depth-level prefix propagation.

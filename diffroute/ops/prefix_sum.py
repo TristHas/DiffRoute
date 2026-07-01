@@ -63,12 +63,40 @@ def _gradprefix_jump_kernel(prev_ptr, next_ptr,
     tl.store(jump_ptr + pid, tl.where(valid, tl.load(edges_ptr + dst), -1))
 
 
+@triton.jit
+def _prefix_jump_bwd_round_kernel(
+    cur_ptr,
+    next_ptr,
+    jump_ptr,
+    n_nodes,
+    n_feat: tl.constexpr,
+    BLOCK_F: tl.constexpr,
+):
+    pid = tl.program_id(0)
+    if pid >= n_nodes:
+        return
+    dst = tl.load(jump_ptr + pid)
+    valid = dst >= 0
+    offs = tl.arange(0, BLOCK_F)
+
+    for base in range(0, n_feat, BLOCK_F):
+        m = offs + base < n_feat
+        g = tl.load(cur_ptr + pid * n_feat + base + offs, mask=m, other=0.0)
+        tl.atomic_add(next_ptr + pid * n_feat + base + offs, g, mask=m)
+        tl.atomic_add(
+            next_ptr + dst * n_feat + base + offs,
+            g,
+            mask=m & valid,
+        )
+
+
 # ------------------------------------------------------------------
 # Low-level helper: forward
 # ------------------------------------------------------------------
 def _prefix_jump_fwd(irf: torch.Tensor,
                      edges: torch.Tensor,
-                     block_f: int = 128) -> torch.Tensor:
+                     block_f: int = 128,
+                     return_jumps: bool = False):
     """
     Fast inclusive prefix (node -> outlet) via pointer-jumping.
     """
@@ -81,6 +109,7 @@ def _prefix_jump_fwd(irf: torch.Tensor,
     # running jump table that gets contracted each round
     e_run  = edges.clone()
     e_snap = torch.empty_like(e_run)   # scratch snapshot
+    jump_history = []
 
     rounds = math.ceil(math.log2(max(1, n)))
     grid   = (n,)
@@ -89,12 +118,16 @@ def _prefix_jump_fwd(irf: torch.Tensor,
             #print(buf0.device)
             # snapshot current jump table (so kernel reads stable values)
             e_snap.copy_(e_run)
+            if return_jumps:
+                jump_history.append(e_snap.clone())
             _prefix_jump_kernel[grid](buf0, buf1, e_run, e_snap,
                                       n, f, BLOCK_F=block_f)
             buf0, buf1 = buf1, buf0
             if (e_run < 0).all():
                 break
 
+    if return_jumps:
+        return buf0, jump_history
     return buf0
 
 
@@ -128,12 +161,11 @@ def _prefix_bwd_push_kernel(
         )
 
         # push downstream (atomic because many parents can target same child)
-        if valid:
-            tl.atomic_add(
-                next_ptr + dst * n_feat + base + offs,
-                g,
-                mask=m,
-            )
+        tl.atomic_add(
+            next_ptr + dst * n_feat + base + offs,
+            g,
+            mask=m & valid,
+        )
 
 
 def _prefix_jump_bwd(g_prefix: torch.Tensor,
@@ -218,6 +250,33 @@ def _prefix_jump_bwd(g_prefix: torch.Tensor,
     return g_irf
 
 
+def _prefix_jump_bwd_from_history(
+    g_prefix: torch.Tensor,
+    jump_history: tuple[torch.Tensor, ...],
+    block_f: int = 128,
+) -> torch.Tensor:
+    assert g_prefix.ndim == 2, "g_prefix must be [n, f]"
+    n, f = g_prefix.shape
+    cur = g_prefix.contiguous()
+    next_ = torch.empty_like(cur)
+    block_f = min(block_f, triton.next_power_of_2(f))
+    grid = (n,)
+
+    with torch.cuda.device(g_prefix.device):
+        for jump in reversed(jump_history):
+            next_ = cur.clone()
+            _prefix_bwd_push_kernel[grid](
+                cur,
+                next_,
+                jump,
+                n,
+                n_feat=f,
+                BLOCK_F=block_f,
+            )
+            cur, next_ = next_, cur
+    return cur
+
+
 
 # ------------------------------------------------------------------
 # Autograd wrapper
@@ -225,17 +284,16 @@ def _prefix_jump_bwd(g_prefix: torch.Tensor,
 class PrefixSum(Function):
     @staticmethod
     def forward(ctx, irf, edges, block_f: int = 128):
-        prefix = _prefix_jump_fwd(irf, edges, block_f)
-        ctx.save_for_backward(edges)
+        prefix, jump_history = _prefix_jump_fwd(irf, edges, block_f, return_jumps=True)
+        ctx.save_for_backward(*jump_history)
         ctx.block_f = block_f
         return prefix
 
     @staticmethod
     def backward(ctx, g_prefix):
-        edges, = ctx.saved_tensors
+        jump_history = ctx.saved_tensors
         block_f = ctx.block_f
-        g_irf = _prefix_jump_bwd(g_prefix, edges) #, block_f)
-        #g_irf = prefix_sum_bwd_ref(g_prefix, edges)
+        g_irf = _prefix_jump_bwd_from_history(g_prefix, jump_history, block_f)
         return g_irf, None, None
 
 
