@@ -30,7 +30,15 @@ class SparseKernel(nn.Module):
         
 class BlockSparseKernel(nn.Module): 
     """Block-sparse tensor storing convolution kernels."""
-    def __init__(self, block_indices, block_values, block_size, size, block_col_order=None):
+    def __init__(
+        self,
+        block_indices,
+        block_values,
+        block_size,
+        size,
+        block_col_order=None,
+        block_col_offsets=None,
+    ):
         """Store block-sparse indices and values for convolution.
 
         Args:
@@ -46,6 +54,9 @@ class BlockSparseKernel(nn.Module):
         if block_col_order is None:
             block_col_order = self._make_col_order(block_indices, block_size, size)
         self.register_buffer("block_col_order", block_col_order)
+        if block_col_offsets is None:
+            block_col_offsets = self._make_col_offsets(block_indices, block_size, size)
+        self.register_buffer("block_col_offsets", block_col_offsets)
         self.block_size = block_size        # Block size
         self.size = size                    # Overall size of the tensor [H, W, ks]
 
@@ -58,11 +69,25 @@ class BlockSparseKernel(nn.Module):
         sort_key = block_indices[:, 1].long() * n_row_blocks + block_indices[:, 0].long()
         return torch.argsort(sort_key).to(torch.int32)
 
+    @staticmethod
+    def _make_col_offsets(block_indices, block_size, size):
+        """Return CSR offsets into `block_col_order` for each input block."""
+        n_col_blocks = (int(size[1]) + block_size - 1) // block_size
+        offsets = torch.empty((n_col_blocks + 1,), dtype=torch.int32, device=block_indices.device)
+        offsets[0] = 0
+        if n_col_blocks == 0:
+            return offsets
+        cols = block_indices[:, 1].long()
+        counts = torch.bincount(cols, minlength=n_col_blocks).to(torch.int32)
+        offsets[1:] = torch.cumsum(counts, dim=0)
+        return offsets
+
     def to(self, device):
         """Move block indices and values to a target device."""
         self.block_indices = self.block_indices.to(device)
         self.block_values = self.block_values.to(device)
         self.block_col_order = self.block_col_order.to(device)
+        self.block_col_offsets = self.block_col_offsets.to(device)
         return self
 
     def to_dense(self):

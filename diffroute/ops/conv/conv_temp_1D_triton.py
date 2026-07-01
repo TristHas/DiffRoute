@@ -313,6 +313,89 @@ def block_sparse_conv_1d_bwd_dx_col_grouped_kernel(
                 + tl.arange(0, BLOCK_SIZE_M)[:, None]
             )
             tl.atomic_add(dx_ptrs, group_acc, mask=valid_time[None, :])
+
+
+@triton.jit
+def block_sparse_conv_1d_bwd_dx_col_csr_kernel(
+    dy_ptr,            # [B, n_out_blocks, T, M]
+    dx_ptr,            # [B, n_in_blocks,  T, M]
+    coo_ptr,           # [Nnz, 2]
+    block_order_ptr,   # [Nnz], sorted by c_block then r_block
+    col_offsets_ptr,   # [n_in_blocks + 1], offsets into block_order_ptr
+    values_ptr,        # [Nnz, K, M, M]
+    B: tl.int32,
+    n_in_blocks: tl.int32,
+    n_out_blocks: tl.int32,
+    n_time_steps: tl.int32,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    KERNEL_SIZE: tl.constexpr,
+):
+    c_block = tl.program_id(0)
+    n_tile  = tl.program_id(1)
+    b_idx   = tl.program_id(2)
+
+    t_out = n_tile * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    t_mask = t_out < n_time_steps
+
+    out_batch_stride = n_out_blocks * n_time_steps * BLOCK_SIZE_M
+    in_batch_stride  = n_in_blocks  * n_time_steps * BLOCK_SIZE_M
+    out_block_stride = n_time_steps * BLOCK_SIZE_M
+    in_block_stride  = n_time_steps * BLOCK_SIZE_M
+
+    dy_base = dy_ptr + b_idx * out_batch_stride
+    dx_base = dx_ptr + b_idx * in_batch_stride
+
+    out_idx = tl.arange(0, BLOCK_SIZE_M)[:, None]
+    in_idx  = tl.arange(0, BLOCK_SIZE_M)[None, :]
+
+    padded_out_channels = n_out_blocks * BLOCK_SIZE_M
+    padded_in_channels  = n_in_blocks  * BLOCK_SIZE_M
+
+    n_range = c_block * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+    n_mask = n_range < padded_in_channels
+
+    acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+    start = tl.load(col_offsets_ptr + c_block)
+    end = tl.load(col_offsets_ptr + c_block + 1)
+    cursor = start
+
+    while cursor < end:
+        nzb = tl.load(block_order_ptr + cursor)
+        r_block = tl.load(coo_ptr + nzb * 2 + 0)
+
+        dy_block_ptr = dy_base + r_block * out_block_stride
+        weight_block_base = nzb * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
+
+        m_range = r_block * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+        m_mask = m_range < padded_out_channels
+        block_mask = m_mask[:, None] & n_mask[None, :]
+
+        for k in range(KERNEL_SIZE):
+            t_dy = t_out + (KERNEL_SIZE - 1) - k
+            valid_time = t_dy < n_time_steps
+
+            w_off = weight_block_base + k * (BLOCK_SIZE_M * BLOCK_SIZE_M)
+            w_idx = w_off + out_idx * BLOCK_SIZE_M + in_idx
+            kernel_vals = tl.load(values_ptr + w_idx, mask=block_mask, other=0.0)
+
+            dy_ptrs = (
+                dy_block_ptr
+                + t_dy[None, :] * BLOCK_SIZE_M
+                + out_idx
+            )
+            dy_tile = tl.load(dy_ptrs, mask=valid_time[None, :], other=0.0)
+            acc += tl.dot(tl.trans(kernel_vals), dy_tile)
+
+        cursor += 1
+
+    dx_ptrs = (
+        dx_base
+        + c_block * in_block_stride
+        + t_out[None, :] * BLOCK_SIZE_M
+        + tl.arange(0, BLOCK_SIZE_M)[:, None]
+    )
+    tl.store(dx_ptrs, acc, mask=t_mask[None, :])
 # ------------------------------------------------------------
 # Backward - dW kernel
 # ------------------------------------------------------------

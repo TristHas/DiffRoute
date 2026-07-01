@@ -336,6 +336,7 @@ def profile(args: argparse.Namespace) -> dict:
         args.block_n_dx,
         args.block_n_dw,
         block.block_col_order,
+        block.block_col_offsets,
     )
     conv_dw_loss = y_conv_dw.sum()
     results.append(
@@ -385,6 +386,7 @@ def block_sparse_call(
     block_n_dx: int | None = None,
     block_n_dw: int | None = None,
     dx_block_order: torch.Tensor | None = None,
+    dx_block_col_offsets: torch.Tensor | None = None,
 ) -> torch.Tensor:
     config = select_conv_config(
         device=x.device,
@@ -406,6 +408,7 @@ def block_sparse_call(
             BLOCK_SIZE_N_DX=config.block_n_dx,
             BLOCK_SIZE_N_DVALUES=config.block_n_dw,
             DX_BLOCK_ORDER=dx_block_order,
+            DX_BLOCK_COL_OFFSETS=dx_block_col_offsets,
         )
     cols = block_indices[:, 1]
     rows = block_indices[:, 0]
@@ -453,6 +456,7 @@ def correctness(args: argparse.Namespace) -> dict:
             args.block_n_dx,
             args.block_n_dw,
             block.block_col_order,
+            block.block_col_offsets,
         )
         y_torch = block_sparse_call(
             runoff,
@@ -480,6 +484,7 @@ def correctness(args: argparse.Namespace) -> dict:
         args.block_n_dx,
         args.block_n_dw,
         block.block_col_order,
+        block.block_col_offsets,
     )
     dx_t, dw_t = torch.autograd.grad(y_t.sum(), (x_t, vals_t))
 
