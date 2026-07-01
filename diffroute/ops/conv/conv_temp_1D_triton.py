@@ -211,6 +211,108 @@ def block_sparse_conv_1d_bwd_dx_kernel(
                     + tl.arange(0, BLOCK_SIZE_M)[:, None]
                 )
                 tl.atomic_add(dx_ptrs, partial_dx, mask=valid_time[None, :])
+
+
+@triton.jit
+def block_sparse_conv_1d_bwd_dx_col_grouped_kernel(
+    dy_ptr,            # [B, n_out_blocks, T, M]
+    dx_ptr,            # [B, n_in_blocks,  T, M]
+    coo_ptr,           # [Nnz, 2]
+    block_order_ptr,   # [Nnz], sorted by c_block then r_block
+    values_ptr,        # [Nnz, K, M, M]
+    B: tl.int32,
+    n_in_blocks: tl.int32,
+    n_out_blocks: tl.int32,
+    n_time_steps: tl.int32,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    KERNEL_SIZE: tl.constexpr,
+    N_NONZERO_BLOCKS: tl.constexpr,
+    NZB_BLOCK_SIZE: tl.constexpr,
+):
+    t_range = tl.program_id(1) * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+    t_mask  = t_range < n_time_steps
+    tile_nzb = tl.program_id(0)
+    b_idx    = tl.program_id(2)
+
+    out_batch_stride = n_out_blocks * n_time_steps * BLOCK_SIZE_M
+    in_batch_stride  = n_in_blocks  * n_time_steps * BLOCK_SIZE_M
+    out_block_stride = n_time_steps * BLOCK_SIZE_M
+    in_block_stride  = n_time_steps * BLOCK_SIZE_M
+
+    dy_base = dy_ptr + b_idx * out_batch_stride
+    dx_base = dx_ptr + b_idx * in_batch_stride
+
+    out_idx = tl.arange(0, BLOCK_SIZE_M)[:, None]
+    in_idx  = tl.arange(0, BLOCK_SIZE_M)[None, :]
+
+    padded_out_channels = n_out_blocks * BLOCK_SIZE_M
+    padded_in_channels  = n_in_blocks  * BLOCK_SIZE_M
+
+    # With blocks sorted by input column, reduce all contributions to the same
+    # dx block inside this program and issue one atomic add per tap/time tile.
+    for k in range(KERNEL_SIZE):
+        t_in = t_range + (k - (KERNEL_SIZE - 1))
+        valid_time = (t_in >= 0) & (t_in < n_time_steps)
+
+        group_acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
+        group_active = False
+        prev_c_block = 0
+
+        for i in range(NZB_BLOCK_SIZE):
+            sorted_nzb = tile_nzb * NZB_BLOCK_SIZE + i
+            if sorted_nzb < N_NONZERO_BLOCKS:
+                nzb = tl.load(block_order_ptr + sorted_nzb)
+                r_block = tl.load(coo_ptr + nzb * 2 + 0)
+                c_block = tl.load(coo_ptr + nzb * 2 + 1)
+
+                dy_block_ptr = dy_base + r_block * out_block_stride
+                weight_block_base = nzb * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
+
+                m_range = r_block * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+                n_range = c_block * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
+                m_mask  = m_range < padded_out_channels
+                n_mask  = n_range < padded_in_channels
+                block_mask = m_mask[:, None] & n_mask[None, :]
+
+                w_off = weight_block_base + k * (BLOCK_SIZE_M * BLOCK_SIZE_M)
+                w_idx = w_off + out_idx * BLOCK_SIZE_M + in_idx
+                kernel_vals = tl.load(values_ptr + w_idx, mask=block_mask, other=0.0)
+
+                dy_ptrs = (
+                    dy_block_ptr
+                    + t_range[None, :] * BLOCK_SIZE_M
+                    + out_idx
+                )
+                dy_tile = tl.load(dy_ptrs, mask=t_mask[None, :], other=0.0)
+                partial_dx = tl.dot(tl.trans(kernel_vals), dy_tile)
+
+                if not group_active:
+                    group_acc = partial_dx
+                    prev_c_block = c_block
+                    group_active = True
+                else:
+                    if c_block == prev_c_block:
+                        group_acc += partial_dx
+                    else:
+                        dx_ptrs = (
+                            dx_base
+                            + prev_c_block * in_block_stride
+                            + t_in[None, :] * BLOCK_SIZE_M
+                            + tl.arange(0, BLOCK_SIZE_M)[:, None]
+                        )
+                        tl.atomic_add(dx_ptrs, group_acc, mask=valid_time[None, :])
+                        group_acc = partial_dx
+                        prev_c_block = c_block
+
+        if group_active:
+            dx_ptrs = (
+                dx_base
+                + prev_c_block * in_block_stride
+                + t_in[None, :] * BLOCK_SIZE_M
+                + tl.arange(0, BLOCK_SIZE_M)[:, None]
+            )
+            tl.atomic_add(dx_ptrs, group_acc, mask=valid_time[None, :])
 # ------------------------------------------------------------
 # Backward - dW kernel
 # ------------------------------------------------------------

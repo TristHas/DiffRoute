@@ -126,6 +126,7 @@ def triton_conv(x, block, config):
         config.block_n,
         BLOCK_SIZE_N_DX=config.block_n_dx,
         BLOCK_SIZE_N_DVALUES=config.block_n_dw,
+        DX_BLOCK_ORDER=block.block_col_order,
     )
 
 

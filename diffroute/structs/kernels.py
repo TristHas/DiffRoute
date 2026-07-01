@@ -30,7 +30,7 @@ class SparseKernel(nn.Module):
         
 class BlockSparseKernel(nn.Module): 
     """Block-sparse tensor storing convolution kernels."""
-    def __init__(self, block_indices, block_values, block_size, size):
+    def __init__(self, block_indices, block_values, block_size, size, block_col_order=None):
         """Store block-sparse indices and values for convolution.
 
         Args:
@@ -43,13 +43,26 @@ class BlockSparseKernel(nn.Module):
         super().__init__()
         self.register_buffer("block_indices", block_indices)  # [n_blocks, 2]
         self.register_buffer("block_values", block_values)    # [n_blocks, block_size, block_size, ks]
+        if block_col_order is None:
+            block_col_order = self._make_col_order(block_indices, block_size, size)
+        self.register_buffer("block_col_order", block_col_order)
         self.block_size = block_size        # Block size
         self.size = size                    # Overall size of the tensor [H, W, ks]
+
+    @staticmethod
+    def _make_col_order(block_indices, block_size, size):
+        """Return block ids sorted by input block, then output block."""
+        if block_indices.numel() == 0:
+            return torch.empty((0,), dtype=torch.int32, device=block_indices.device)
+        n_row_blocks = (int(size[0]) + block_size - 1) // block_size
+        sort_key = block_indices[:, 1].long() * n_row_blocks + block_indices[:, 0].long()
+        return torch.argsort(sort_key).to(torch.int32)
 
     def to(self, device):
         """Move block indices and values to a target device."""
         self.block_indices = self.block_indices.to(device)
         self.block_values = self.block_values.to(device)
+        self.block_col_order = self.block_col_order.to(device)
         return self
 
     def to_dense(self):

@@ -90,7 +90,8 @@ class BlockSparseCausalConv(nn.Module):
                                         BLOCK_SIZE_M, 
                                         config.block_n,
                                         BLOCK_SIZE_N_DX=config.block_n_dx,
-                                        BLOCK_SIZE_N_DVALUES=config.block_n_dw)
+                                        BLOCK_SIZE_N_DVALUES=config.block_n_dw,
+                                        DX_BLOCK_ORDER=w.block_col_order)
         else:        
             return conv1d_block_sparse(
                 x, 

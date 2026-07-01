@@ -3,6 +3,7 @@ import torch.nn.functional as F
 from .conv_temp_1D_triton import (
     block_sparse_conv_1d_fwd_kernel,
     block_sparse_conv_1d_bwd_dx_kernel,
+    block_sparse_conv_1d_bwd_dx_col_grouped_kernel,
     block_sparse_conv_1d_bwd_dvalues_kernel
 )
 
@@ -111,6 +112,7 @@ def block_sparse_conv_1d_backward(
     x: torch.Tensor,               # [B, C_in,  T]
     coo_block_coords: torch.Tensor,# [Nnz, 2]
     values: torch.Tensor,          # [Nnz, M_out, M_in, K]
+    dx_block_order: torch.Tensor | None,
     BLOCK_SIZE_M: int,
     BLOCK_SIZE_N: int,
     NZB_BLOCK_SIZE: int = 16,
@@ -156,22 +158,41 @@ def block_sparse_conv_1d_backward(
         )
         dx_blk = torch.zeros_like(x_blk)
         with torch.cuda.device(x.device):
-            block_sparse_conv_1d_bwd_dx_kernel[grid_dx](
-                dy_blk,
-                dx_blk,
-                coo_block_coords.int(),
-                values_perm,
-                B,
-                n_in_blocks,
-                n_out_blocks,
-                T,
-                BLOCK_SIZE_M,
-                block_n_dx,
-                K,
-                N_NONZERO_BLOCKS,
-                NZB_BLOCK_SIZE,
-                num_warps=8
-            )
+            if dx_block_order is not None and dx_block_order.numel() == N_NONZERO_BLOCKS:
+                block_sparse_conv_1d_bwd_dx_col_grouped_kernel[grid_dx](
+                    dy_blk,
+                    dx_blk,
+                    coo_block_coords.int(),
+                    dx_block_order,
+                    values_perm,
+                    B,
+                    n_in_blocks,
+                    n_out_blocks,
+                    T,
+                    BLOCK_SIZE_M,
+                    block_n_dx,
+                    K,
+                    N_NONZERO_BLOCKS,
+                    NZB_BLOCK_SIZE,
+                    num_warps=8
+                )
+            else:
+                block_sparse_conv_1d_bwd_dx_kernel[grid_dx](
+                    dy_blk,
+                    dx_blk,
+                    coo_block_coords.int(),
+                    values_perm,
+                    B,
+                    n_in_blocks,
+                    n_out_blocks,
+                    T,
+                    BLOCK_SIZE_M,
+                    block_n_dx,
+                    K,
+                    N_NONZERO_BLOCKS,
+                    NZB_BLOCK_SIZE,
+                    num_warps=8
+                )
         dx = unpermute_unpad_block(dx_blk, C_in)
 
     dvalues = None
@@ -208,12 +229,15 @@ class BlockSparseConv1dFn(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, coo_block_coords, values, kernel_shape,
                 BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16,
-                BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None):
+                BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None,
+                DX_BLOCK_ORDER=None):
         y = block_sparse_conv_1d_forward(
             x, coo_block_coords, values, kernel_shape,
             BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE
         )
-        ctx.save_for_backward(x, coo_block_coords, values)
+        if DX_BLOCK_ORDER is None:
+            DX_BLOCK_ORDER = torch.empty((0,), device=coo_block_coords.device, dtype=torch.int32)
+        ctx.save_for_backward(x, coo_block_coords, values, DX_BLOCK_ORDER)
         ctx.kernel_shape = kernel_shape
         ctx.BLOCK_SIZE_M = BLOCK_SIZE_M
         ctx.BLOCK_SIZE_N = BLOCK_SIZE_N
@@ -224,9 +248,11 @@ class BlockSparseConv1dFn(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, dy):
-        x, coo_block_coords, values = ctx.saved_tensors
+        x, coo_block_coords, values, dx_block_order = ctx.saved_tensors
+        if dx_block_order.numel() == 0:
+            dx_block_order = None
         dx, dvalues = block_sparse_conv_1d_backward(
-            dy, x, coo_block_coords, values,
+            dy, x, coo_block_coords, values, dx_block_order,
             ctx.BLOCK_SIZE_M, ctx.BLOCK_SIZE_N, ctx.NZB_BLOCK_SIZE,
             needs_dx=ctx.needs_input_grad[0],
             needs_dvalues=ctx.needs_input_grad[2],
@@ -234,13 +260,15 @@ class BlockSparseConv1dFn(torch.autograd.Function):
             BLOCK_SIZE_N_DVALUES=ctx.BLOCK_SIZE_N_DVALUES,
         )
         # None for non-tensor args
-        return dx, None, dvalues, None, None, None, None, None, None
+        return dx, None, dvalues, None, None, None, None, None, None, None
 
 def block_sparse_conv_1d(x, coo_block_coords, values, kernel_shape,
                          BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16,
-                         BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None):
+                         BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None,
+                         DX_BLOCK_ORDER=None):
     return BlockSparseConv1dFn.apply(
         x, coo_block_coords, values, kernel_shape,
         BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE,
-        BLOCK_SIZE_N_DX, BLOCK_SIZE_N_DVALUES
+        BLOCK_SIZE_N_DX, BLOCK_SIZE_N_DVALUES,
+        DX_BLOCK_ORDER
     )
