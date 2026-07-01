@@ -466,3 +466,61 @@ def block_sparse_conv_1d_bwd_dvalues_kernel(
                 base = nzb * (KERNEL_SIZE * block_size) + k * block_size
                 w_idx = base + out_idx * BLOCK_SIZE_M + in_idx
                 tl.atomic_add(dvalues_ptr + w_idx, partial_dW)
+
+
+@triton.jit
+def block_sparse_conv_1d_bwd_dvalues_time_reduce_kernel(
+    x_ptr,               # [1, n_in_blocks,  T, M]
+    dy_ptr,              # [1, n_out_blocks, T, M]
+    coo_ptr,             # [Nnz, 2]
+    dvalues_ptr,         # [Nnz, K, M, M]
+    n_in_blocks: tl.int32,
+    n_out_blocks: tl.int32,
+    n_time_steps: tl.int32,
+    BLOCK_SIZE_M: tl.constexpr,
+    BLOCK_SIZE_N: tl.constexpr,
+    KERNEL_SIZE: tl.constexpr,
+    N_TIME_TILES: tl.constexpr,
+):
+    nzb = tl.program_id(0)
+    k = tl.program_id(1)
+
+    in_block_stride  = n_time_steps * BLOCK_SIZE_M
+    out_block_stride = n_time_steps * BLOCK_SIZE_M
+
+    r_block = tl.load(coo_ptr + nzb * 2 + 0)
+    c_block = tl.load(coo_ptr + nzb * 2 + 1)
+
+    dy_block_ptr = dy_ptr + r_block * out_block_stride
+    x_block_ptr  = x_ptr  + c_block * in_block_stride
+
+    out_idx = tl.arange(0, BLOCK_SIZE_M)[:, None]
+    in_idx  = tl.arange(0, BLOCK_SIZE_M)[None, :]
+
+    acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_M), dtype=tl.float32)
+
+    for n_tile in range(N_TIME_TILES):
+        t_range = n_tile * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
+        t_mask = t_range < n_time_steps
+        t_in = t_range + (k - (KERNEL_SIZE - 1))
+        valid_t = (t_in >= 0) & (t_in < n_time_steps)
+
+        dy_ptrs = (
+            dy_block_ptr
+            + t_range[None, :] * BLOCK_SIZE_M
+            + out_idx
+        )
+        dy_tile = tl.load(dy_ptrs, mask=t_mask[None, :], other=0.0)
+
+        x_ptrs = (
+            x_block_ptr
+            + t_in[None, :] * BLOCK_SIZE_M
+            + tl.arange(0, BLOCK_SIZE_M)[:, None]
+        )
+        x_tile = tl.load(x_ptrs, mask=valid_t[None, :], other=0.0)
+        acc += tl.dot(dy_tile, tl.trans(x_tile))
+
+    block_size = BLOCK_SIZE_M * BLOCK_SIZE_M
+    base = nzb * (KERNEL_SIZE * block_size) + k * block_size
+    w_idx = base + out_idx * BLOCK_SIZE_M + in_idx
+    tl.store(dvalues_ptr + w_idx, acc)

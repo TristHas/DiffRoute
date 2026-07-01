@@ -5,7 +5,8 @@ from .conv_temp_1D_triton import (
     block_sparse_conv_1d_bwd_dx_kernel,
     block_sparse_conv_1d_bwd_dx_col_grouped_kernel,
     block_sparse_conv_1d_bwd_dx_col_csr_kernel,
-    block_sparse_conv_1d_bwd_dvalues_kernel
+    block_sparse_conv_1d_bwd_dvalues_kernel,
+    block_sparse_conv_1d_bwd_dvalues_time_reduce_kernel,
 )
 
 def pad_block_permute(x: torch.Tensor, block_size: int):
@@ -231,29 +232,48 @@ def block_sparse_conv_1d_backward(
 
     dvalues = None
     if needs_dvalues:
-        grid_dv = (
-            (N_NONZERO_BLOCKS + NZB_BLOCK_SIZE - 1) // NZB_BLOCK_SIZE,
-            (T + block_n_dvalues - 1) // block_n_dvalues,
-            B
-        )
-        dvalues_perm = torch.zeros_like(values_perm)
+        use_time_reduce_dvalues = B == 1
+        dvalues_perm = torch.empty_like(values_perm) if use_time_reduce_dvalues else torch.zeros_like(values_perm)
         with torch.cuda.device(x.device):
-            block_sparse_conv_1d_bwd_dvalues_kernel[grid_dv](
-                x_blk,
-                dy_blk,
-                coo_block_coords.int(),
-                dvalues_perm,
-                B,
-                n_in_blocks,
-                n_out_blocks,
-                T,
-                BLOCK_SIZE_M,
-                block_n_dvalues,
-                K,
-                N_NONZERO_BLOCKS,
-                NZB_BLOCK_SIZE,
-                num_warps=4
-            )
+            if use_time_reduce_dvalues:
+                n_time_tiles_dvalues = (T + block_n_dvalues - 1) // block_n_dvalues
+                grid_dv = (N_NONZERO_BLOCKS, K, B)
+                block_sparse_conv_1d_bwd_dvalues_time_reduce_kernel[grid_dv](
+                    x_blk,
+                    dy_blk,
+                    coo_block_coords.int(),
+                    dvalues_perm,
+                    n_in_blocks,
+                    n_out_blocks,
+                    T,
+                    BLOCK_SIZE_M,
+                    block_n_dvalues,
+                    K,
+                    n_time_tiles_dvalues,
+                    num_warps=4
+                )
+            else:
+                grid_dv = (
+                    (N_NONZERO_BLOCKS + NZB_BLOCK_SIZE - 1) // NZB_BLOCK_SIZE,
+                    (T + block_n_dvalues - 1) // block_n_dvalues,
+                    B
+                )
+                block_sparse_conv_1d_bwd_dvalues_kernel[grid_dv](
+                    x_blk,
+                    dy_blk,
+                    coo_block_coords.int(),
+                    dvalues_perm,
+                    B,
+                    n_in_blocks,
+                    n_out_blocks,
+                    T,
+                    BLOCK_SIZE_M,
+                    block_n_dvalues,
+                    K,
+                    N_NONZERO_BLOCKS,
+                    NZB_BLOCK_SIZE,
+                    num_warps=4
+                )
         # Return dvalues to original layout [Nnz, M_out, M_in, K]
         dvalues = dvalues_perm.permute(0, 2, 3, 1).contiguous()
     return dx, dvalues

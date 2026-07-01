@@ -30,3 +30,13 @@
 - Runtime: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dx --trials 5 --warmup 2` reported `mean_ms=168.7881652832031`, `min_ms=168.66015625`.
 - Baseline comparison: committed isolated `dX` baseline was `mean_ms=799.156`, so the current default is `4.73x` faster and reduces latency by `78.9%`.
 - Notes: A100/H100 defaults were intentionally left unchanged because this sweep was measured only on GB200.
+
+## Iteration 4 - dW time reduction without atomics
+
+- Target: `block_sparse_conv_1d_bwd_dvalues_kernel`
+- Hypothesis: The weight-gradient kernel atomically accumulates each block/tap across time tiles. For the RAPID workload `B=1`, one program can own one sparse block and one kernel tap, reduce over all time tiles internally, and store the result once.
+- Change: Added `block_sparse_conv_1d_bwd_dvalues_time_reduce_kernel` for `B == 1`. The previous atomic kernel remains the fallback for larger batches. The benchmark harness now treats optional `dX` metadata as optional for local weight-gradient block views.
+- Correctness: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dw --correctness --correct-time-steps 16` passed with `max_abs=1.1313386494293809e-07`, `atol=0.02`.
+- Runtime: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dw --trials 5 --warmup 2` reported `mean_ms=534.3837768554688`, `min_ms=534.3588256835938`.
+- Baseline comparison: committed isolated `dW` baseline was `mean_ms=663.871`, so this is `1.24x` faster and reduces latency by `19.5%`.
+- Notes: The improvement is smaller than `dX` because each program now performs a long time reduction with a 16x16 accumulator; tile and warp tuning are the next obvious axes.
