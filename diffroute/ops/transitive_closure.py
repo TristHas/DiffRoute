@@ -27,20 +27,23 @@ def exp_complex(log_freqs):
     return freqs
 
 def transitive_closure(irf, edges, path_cumsum,
-                          include_self=True, block_f=128):
-    prefix     = prefix_sum(irf, edges, block_f)
+                          include_self=True, block_f=128,
+                          prefix_rounds=None):
+    prefix     = prefix_sum(irf, edges, block_f, prefix_rounds)
     coords, v  = closure_sub(prefix, edges, path_cumsum,
                              include_self, block_f)
     return coords, v, prefix
 
 def log_transitive_closure(irfs_freq, edges, path_cumsum,
-                           *, include_self=True, block_f=128):
+                           *, include_self=True, block_f=128,
+                           prefix_rounds=None):
     """
         
     """
     log_irfs_freq = stable_log_flattened(irfs_freq)
     coords, log_irfs_freq_agg, log_irfs_freq_prefix = transitive_closure(
         log_irfs_freq, edges, path_cumsum,
-        include_self=include_self, block_f=block_f)
+        include_self=include_self, block_f=block_f,
+        prefix_rounds=prefix_rounds)
     irfs_freq_agg = exp_complex(log_irfs_freq_agg)
     return coords, irfs_freq_agg

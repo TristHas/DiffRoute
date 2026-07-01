@@ -96,6 +96,7 @@ def _prefix_jump_bwd_round_kernel(
 def _prefix_jump_fwd(irf: torch.Tensor,
                      edges: torch.Tensor,
                      block_f: int = 128,
+                     rounds: int | None = None,
                      return_jumps: bool = False):
     """
     Fast inclusive prefix (node -> outlet) via pointer-jumping.
@@ -111,7 +112,8 @@ def _prefix_jump_fwd(irf: torch.Tensor,
     e_snap = torch.empty_like(e_run)   # scratch snapshot
     jump_history = []
 
-    rounds = math.ceil(math.log2(max(1, n)))
+    if rounds is None:
+        rounds = math.ceil(math.log2(max(1, n)))
     grid   = (n,)
     with torch.cuda.device(irf.device):
         for _ in range(rounds):
@@ -123,8 +125,6 @@ def _prefix_jump_fwd(irf: torch.Tensor,
             _prefix_jump_kernel[grid](buf0, buf1, e_run, e_snap,
                                       n, f, BLOCK_F=block_f)
             buf0, buf1 = buf1, buf0
-            if (e_run < 0).all():
-                break
 
     if return_jumps:
         return buf0, jump_history
@@ -283,8 +283,14 @@ def _prefix_jump_bwd_from_history(
 # ------------------------------------------------------------------
 class PrefixSum(Function):
     @staticmethod
-    def forward(ctx, irf, edges, block_f: int = 128):
-        prefix, jump_history = _prefix_jump_fwd(irf, edges, block_f, return_jumps=True)
+    def forward(ctx, irf, edges, block_f: int = 128, rounds: int | None = None):
+        prefix, jump_history = _prefix_jump_fwd(
+            irf,
+            edges,
+            block_f,
+            rounds=rounds,
+            return_jumps=True,
+        )
         ctx.save_for_backward(*jump_history)
         ctx.block_f = block_f
         return prefix
@@ -294,8 +300,8 @@ class PrefixSum(Function):
         jump_history = ctx.saved_tensors
         block_f = ctx.block_f
         g_irf = _prefix_jump_bwd_from_history(g_prefix, jump_history, block_f)
-        return g_irf, None, None
+        return g_irf, None, None, None
 
 
-def prefix_sum(irf, edges, block_f: int = 128):
-    return PrefixSum.apply(irf, edges, block_f)
+def prefix_sum(irf, edges, block_f: int = 128, rounds: int | None = None):
+    return PrefixSum.apply(irf, edges, block_f, rounds)

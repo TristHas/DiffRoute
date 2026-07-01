@@ -3,6 +3,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 import networkx as nx
+import math
 
 from typing import Dict, List, Tuple
 from tqdm.auto import tqdm
@@ -33,8 +34,16 @@ class RivTree(nn.Module):
         self.include_index_diag = include_index_diag
         self.irf_fn = irf_fn
         
-        edges, path_cumsum, _ = init_pre_indices(g, self.nodes_idx, 
+        edges, path_cumsum, _ = init_pre_indices(g, self.nodes_idx,
                                                  include_self=include_index_diag)
+        if path_cumsum.numel() == 0:
+            self.prefix_jump_rounds = 0
+        else:
+            path_counts = torch.empty_like(path_cumsum)
+            path_counts[0] = path_cumsum[0]
+            path_counts[1:] = path_cumsum[1:] - path_cumsum[:-1]
+            max_path_count = max(1, int(path_counts.max().item()))
+            self.prefix_jump_rounds = math.ceil(math.log2(max_path_count))
 
         self.register_buffer("edges", edges)
         self.register_buffer("path_cumsum", path_cumsum)

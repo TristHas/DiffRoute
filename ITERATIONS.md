@@ -71,3 +71,13 @@
 - Runtime: focused 7-trial aggregation backward timing reported mean `47.76411383492606`, median `44.222496032714844`, min `44.10697555541992`. `T=500` full benchmark reported `full.backward.dL_dparams mean_ms=43.57938130696615`, median `37.97795104980469`, and `substep.aggregation.backward.dL_dparams mean_ms=34.24970626831055`, median `26.134239196777344`.
 - Baseline comparison: before aggregation optimization, `T=500` full `dL/dparams` was about `200.596 ms`; after this iteration it is about `37.978 ms` median, a `5.28x` full-path speedup for short sequences.
 - Notes: The remaining aggregation backward cost is now split among closure backward, FFTs, and tensor elementwise/copy overhead rather than the previous depth-level prefix propagation.
+
+## Iteration 8 - Forward prefix fixed jump rounds
+
+- Target: prefix-sum forward inside frequency-domain aggregation.
+- Hypothesis: The RAPID graph has a known pointer-jump depth of 9 rounds, but `_prefix_jump_fwd` checked `(e_run < 0).all()` each round. Passing the precomputed graph depth and removing that device-wide completion check should reduce prefix overhead without changing the aggregated IRFs.
+- Change: `RivTree` now stores `prefix_jump_rounds`, and `aggregate_irf` threads it through `log_transitive_closure` and `prefix_sum`. `_prefix_jump_fwd` runs the requested fixed number of rounds and no longer performs the per-round `.all()` check.
+- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `conv_forward_max_abs_vs_torch=6.59783836454153e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, and finite parameter gradients.
+- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 5 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=27.860505294799804`, median `23.363359451293945`, min `23.1693115234375`; `substep.aggregation.forward mean_ms=21.941305923461915`, median `17.307231903076172`. Focused aggregation breakdown reported `prefix_sum.current_autograd` median `0.547 ms` versus the baseline `0.916 ms`.
+- Baseline comparison: baseline `T=500` full forward median was `24.058048248291016 ms`, so this is `1.03x` faster and reduces median latency by `2.9%`.
+- Notes: This confirms the synchronization overhead was real but not the dominant forward cost; `irfft` and temporal sampling still dominate uncached aggregation.

@@ -11,7 +11,8 @@ def aggregate_irf(params, irf_fn,
                   dt, time_window,
                   cascade=1,
                   include_index_diag=True,
-                  block_f=128):
+                  block_f=128,
+                  prefix_rounds=None):
     """
     """
     irfs = irf_fn(params, time_window=time_window, dt=dt).squeeze()
@@ -22,7 +23,8 @@ def aggregate_irf(params, irf_fn,
     coords, irfs_freq_agg = log_transitive_closure(
         irfs_freq, edges, path_cumsum,
         include_self=include_index_diag,
-        block_f=block_f
+        block_f=block_f,
+        prefix_rounds=prefix_rounds,
     )
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
     return coords, irfs_agg
@@ -63,7 +65,8 @@ class IRFAggregator(nn.Module):
                                           time_window=self.max_delay,
                                           cascade=self.cascade,
                                           include_index_diag=g.include_index_diag,
-                                          block_f=self.block_f)
+                                          block_f=self.block_f,
+                                          prefix_rounds=getattr(g, "prefix_jump_rounds", None))
 
         irfs_agg = self.sampler.kernel_postprocess(irfs_agg)
 
