@@ -40,3 +40,14 @@
 - Runtime: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dw --trials 5 --warmup 2` reported `mean_ms=534.3837768554688`, `min_ms=534.3588256835938`.
 - Baseline comparison: committed isolated `dW` baseline was `mean_ms=663.871`, so this is `1.24x` faster and reduces latency by `19.5%`.
 - Notes: The improvement is smaller than `dX` because each program now performs a long time reduction with a 16x16 accumulator; tile and warp tuning are the next obvious axes.
+
+## Iteration 5 - GB200 dW time-reduction tile tuning
+
+- Target: `block_sparse_conv_1d_bwd_dvalues_time_reduce_kernel`
+- Hypothesis: The new time-reduction kernel has a different optimum than the old atomic kernel. Smaller `BLOCK_N_DW` can improve occupancy and reduce accumulator pressure even though it increases the number of internal time chunks.
+- Sweep: `BLOCK_N_DW=32` gave `516.653 ms`, `64` gave `484.675 ms`, `128` gave `491.929 ms`, `256` gave `534.384 ms`, and `512` gave `748.623 ms`.
+- Change: Updated the GB200/B200 backend default from `BLOCK_N_DW=256` to `BLOCK_N_DW=64`.
+- Correctness: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dw --correctness --correct-time-steps 16` passed with `max_abs=1.1313386494293809e-07`, `atol=0.02`.
+- Runtime: `python benchmarks/rapid_io_conv_kernel_benchmark.py --target dw --trials 5 --warmup 2` reported `mean_ms=484.6630493164063`, `min_ms=484.6455993652344`.
+- Baseline comparison: committed isolated `dW` baseline was `mean_ms=663.871`, so the current default is `1.37x` faster and reduces latency by `27.0%`.
+- Notes: This setting is GB200-specific until the same sweep is run on A100/H100.

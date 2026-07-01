@@ -76,7 +76,7 @@ def select_conv_config(
         if "GB200" in name or "B200" in name or major >= 10:
             default_n = 256
             default_n_dx = 256
-            default_n_dw = 256
+            default_n_dw = 64
         elif "H100" in name or "H200" in name or major == 9:
             default_n = 128
             default_n_dx = 64
