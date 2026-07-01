@@ -61,6 +61,14 @@ python benchmarks/rapid_io_benchmark.py \
   --backward-warmup 1
 ```
 
+Aggregation forward breakdown:
+
+```bash
+python benchmarks/rapid_io_aggregation_forward_breakdown.py \
+  --trials 15 \
+  --warmup 3
+```
+
 The benchmark reports full forward, full backward wrt runoff `X`, full backward
 wrt routing parameters, and the substeps:
 
@@ -139,6 +147,32 @@ Short-sequence (`T=500`) result after aggregation optimization:
 | Aggregation backward `dL/dparams` | 190.25 | 34.25 | 5.55x |
 | Convolution backward `dL/dW` | 11.07 | 11.07 | 1.00x |
 
+Aggregation forward breakdown on the RAPID shape:
+
+| Stage | CUDA median ms |
+|---|---:|
+| Aggregator forward total | 17.78 |
+| Aggregate IRF before sampler | 13.17 |
+| IRF generation | 0.43 |
+| RFFT | 0.06 |
+| Stable log transform | 0.13 |
+| Prefix sum | 0.89 |
+| Closure sub | 2.57 |
+| Complex exp | 1.70 |
+| IFFT | 7.51 |
+| Temporal sampler total | 4.63 |
+| Temporal sampler ReLU | 1.45 |
+| Temporal sampler triangular downsample | 2.60 |
+| Temporal sampler flip | 0.14 |
+| Temporal sampler sum | 0.31 |
+| Temporal sampler normalize | 0.18 |
+
+The aggregation-forward timing also checked prefix-sum alternatives for
+attribution. The current autograd prefix path measured `0.887 ms` median; a
+version without saved jump tables measured `0.757 ms`; a fixed-round version
+without the per-round `.all()` check measured `0.314 ms`. This attribution was
+not committed as a production change.
+
 ## Analysis
 
 The first major inefficiency was structural: `BlockSparseConv1dFn.backward`
@@ -193,11 +227,10 @@ Current remaining bottlenecks:
 - full `dL/dparams` is now sparse-conv `dW` dominated: about `486 ms` of
   `dW` convolution plus about `34 ms` aggregation backward.
 
-Aggregation forward is small for this workload. Aggregation backward is still
-meaningful for short sequences, but after the pointer-jump change it is no
-longer the dominant long-sequence cost. The next long-sequence optimization
-target should return to `dW`; for short sequences, aggregation and fixed
-overheads are now in the same range as convolution.
+Aggregation forward is small for the full RAPID workload. Aggregation backward
+is still meaningful for short sequences, but after the pointer-jump change it
+is no longer the dominant long-sequence cost. For short sequences, aggregation
+and fixed overheads are now in the same range as convolution.
 
 ## Dispatch Architecture
 
@@ -229,7 +262,3 @@ Current defaults are intentionally conservative except where measured on GB200:
 - GB200/B200/SM100+: forward 256, `dX` 256, `dW` 64;
 - H100/H200/SM90: forward 128, `dX` 64, `dW` 128;
 - A100/SM80: 64 for all paths.
-
-Future backends can fit into the same selector without a large framework:
-add an implementation label, provide a callable with the same tensor contract,
-and add one hardware rule or environment override.
