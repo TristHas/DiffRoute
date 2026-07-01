@@ -171,5 +171,8 @@ cython_debug/
 # Ruff stuff:
 .ruff_cache/
 
+# Local benchmark artifacts
+benchmarks/results/
+
 # PyPI configuration file
 .pypirc

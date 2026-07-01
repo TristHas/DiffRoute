@@ -5,6 +5,7 @@ import torch.nn.functional as F
 
 from ..ops import block_sparse_conv_1d
 from ..structs import BlockSparseKernel
+from ..backend import select_conv_config
 
 def conv1d_block_sparse(x, block_values, cols, rows):
     """
@@ -51,13 +52,17 @@ def conv1d_block_sparse(x, block_values, cols, rows):
 
 class BlockSparseCausalConv(nn.Module):
     def __init__(self, bs_kernel=None, 
-                 conv_imp="triton",
+                 conv_imp="auto",
                  block_m=None, 
-                 block_n=64):
+                 block_n=None,
+                 block_n_dx=None,
+                 block_n_dw=None):
         super().__init__()
         self.bs_kernel = bs_kernel
         self.conv_imp = conv_imp
         self.block_n = block_n
+        self.block_n_dx = block_n_dx
+        self.block_n_dw = block_n_dw
         self.block_m = block_m
     
     def forward(self, x, w=None):
@@ -70,15 +75,22 @@ class BlockSparseCausalConv(nn.Module):
         """
         if w is None: w = self.bs_kernel
         assert isinstance(w, BlockSparseKernel), "Kernel must be provided either at init or at forward"
-        BLOCK_SIZE_M = w.block_size if self.block_m is None else self.block_m
-        BLOCK_SIZE_N = self.block_n
-        if self.conv_imp=="triton":
+        config = select_conv_config(device=x.device,
+                                    impl=self.conv_imp,
+                                    block_m=self.block_m,
+                                    block_n=self.block_n,
+                                    block_n_dx=self.block_n_dx,
+                                    block_n_dw=self.block_n_dw)
+        BLOCK_SIZE_M = w.block_size if config.block_m is None else config.block_m
+        if config.impl=="triton":
             return block_sparse_conv_1d(x, 
                                         w.block_indices, 
                                         w.block_values,
                                         w.size,
                                         BLOCK_SIZE_M, 
-                                        BLOCK_SIZE_N)
+                                        config.block_n,
+                                        BLOCK_SIZE_N_DX=config.block_n_dx,
+                                        BLOCK_SIZE_N_DVALUES=config.block_n_dw)
         else:        
             return conv1d_block_sparse(
                 x, 

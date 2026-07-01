@@ -23,6 +23,10 @@ class LTIStagedRouter(nn.Module):
         block_size: int = 16,
         block_f: int = 128,
         cascade: int = 1,
+        conv_imp: str = "auto",
+        block_n: int | None = None,
+        block_n_dx: int | None = None,
+        block_n_dw: int | None = None,
     ) -> None:
         """Configure the staged router and construct its base LTI model.
 
@@ -39,7 +43,11 @@ class LTIStagedRouter(nn.Module):
                                block_size=block_size,
                                dt=dt, cascade=cascade, 
                                sampling_mode=sampling_mode,
-                               block_f=block_f)
+                               block_f=block_f,
+                               conv_imp=conv_imp,
+                               block_n=block_n,
+                               block_n_dx=block_n_dx,
+                               block_n_dw=block_n_dw)
 
     def forward(self, x: torch.Tensor, gs, params=None):
         """Route runoff with any number of leading (batch-like) dimensions.

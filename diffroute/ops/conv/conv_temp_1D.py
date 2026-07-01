@@ -113,7 +113,12 @@ def block_sparse_conv_1d_backward(
     values: torch.Tensor,          # [Nnz, M_out, M_in, K]
     BLOCK_SIZE_M: int,
     BLOCK_SIZE_N: int,
-    NZB_BLOCK_SIZE: int = 16
+    NZB_BLOCK_SIZE: int = 16,
+    *,
+    needs_dx: bool = True,
+    needs_dvalues: bool = True,
+    BLOCK_SIZE_N_DX: int | None = None,
+    BLOCK_SIZE_N_DVALUES: int | None = None,
 ):
     """
     Backward pass:
@@ -130,77 +135,80 @@ def block_sparse_conv_1d_backward(
     N_NONZERO_BLOCKS = coo_block_coords.shape[0]
     K = values.shape[-1]
 
-    # Block/pad independently
+    if not needs_dx and not needs_dvalues:
+        return None, None
+
+    # Block/pad independently. The blocked x/dy layouts are needed by either
+    # one-sided backward path, so prepare them once when any gradient is needed.
     x_blk,  orig_C_in,  padded_C_in,  n_in_blocks  = pad_block_permute(x,  BLOCK_SIZE_M)
     dy_blk, orig_C_out, padded_C_out, n_out_blocks = pad_block_permute(dy, BLOCK_SIZE_M)
 
-    # Prepare dx (blocked) & permuted weights
-    dx_blk = torch.zeros_like(x_blk)
     values_perm = values.permute(0, 3, 1, 2).contiguous()  # [Nnz, K, M_out, M_in]
+    block_n_dx = BLOCK_SIZE_N if BLOCK_SIZE_N_DX is None else BLOCK_SIZE_N_DX
+    block_n_dvalues = BLOCK_SIZE_N if BLOCK_SIZE_N_DVALUES is None else BLOCK_SIZE_N_DVALUES
 
-    n_time_tiles = (T + BLOCK_SIZE_N - 1) // BLOCK_SIZE_N
-    grid_dx = (
-        (N_NONZERO_BLOCKS + NZB_BLOCK_SIZE - 1) // NZB_BLOCK_SIZE,
-        n_time_tiles,
-        B
-    )
-
-    with torch.cuda.device(x.device):
-        block_sparse_conv_1d_bwd_dx_kernel[grid_dx](
-            dy_blk,
-            dx_blk,
-            coo_block_coords.int(),
-            values_perm,
-            B,
-            n_in_blocks,
-            n_out_blocks,
-            T,
-            BLOCK_SIZE_M,
-            BLOCK_SIZE_N,
-            K,
-            N_NONZERO_BLOCKS,
-            NZB_BLOCK_SIZE,
-            num_warps=8
+    dx = None
+    if needs_dx:
+        grid_dx = (
+            (N_NONZERO_BLOCKS + NZB_BLOCK_SIZE - 1) // NZB_BLOCK_SIZE,
+            (T + block_n_dx - 1) // block_n_dx,
+            B
         )
+        dx_blk = torch.zeros_like(x_blk)
+        with torch.cuda.device(x.device):
+            block_sparse_conv_1d_bwd_dx_kernel[grid_dx](
+                dy_blk,
+                dx_blk,
+                coo_block_coords.int(),
+                values_perm,
+                B,
+                n_in_blocks,
+                n_out_blocks,
+                T,
+                BLOCK_SIZE_M,
+                block_n_dx,
+                K,
+                N_NONZERO_BLOCKS,
+                NZB_BLOCK_SIZE,
+                num_warps=8
+            )
+        dx = unpermute_unpad_block(dx_blk, C_in)
 
-    dx = unpermute_unpad_block(dx_blk, C_in)
-
-    # dvalues accumulation (perm shape)
-    dvalues_perm = torch.zeros_like(values_perm)
-
-    grid_dv = (
-        (N_NONZERO_BLOCKS + NZB_BLOCK_SIZE - 1) // NZB_BLOCK_SIZE,
-        n_time_tiles,
-        B
-    )
-
-    with torch.cuda.device(x.device):
-        block_sparse_conv_1d_bwd_dvalues_kernel[grid_dv](
-            x_blk,
-            dy_blk,
-            coo_block_coords.int(),
-            dvalues_perm,
-            B,
-            n_in_blocks,
-            n_out_blocks,
-            T,
-            BLOCK_SIZE_M,
-            BLOCK_SIZE_N,
-            K,
-            N_NONZERO_BLOCKS,
-            NZB_BLOCK_SIZE,
-            num_warps=4
+    dvalues = None
+    if needs_dvalues:
+        grid_dv = (
+            (N_NONZERO_BLOCKS + NZB_BLOCK_SIZE - 1) // NZB_BLOCK_SIZE,
+            (T + block_n_dvalues - 1) // block_n_dvalues,
+            B
         )
-
-    # Return dvalues to original layout [Nnz, M_out, M_in, K]
-    dvalues = dvalues_perm.permute(0, 2, 3, 1).contiguous()
+        dvalues_perm = torch.zeros_like(values_perm)
+        with torch.cuda.device(x.device):
+            block_sparse_conv_1d_bwd_dvalues_kernel[grid_dv](
+                x_blk,
+                dy_blk,
+                coo_block_coords.int(),
+                dvalues_perm,
+                B,
+                n_in_blocks,
+                n_out_blocks,
+                T,
+                BLOCK_SIZE_M,
+                block_n_dvalues,
+                K,
+                N_NONZERO_BLOCKS,
+                NZB_BLOCK_SIZE,
+                num_warps=4
+            )
+        # Return dvalues to original layout [Nnz, M_out, M_in, K]
+        dvalues = dvalues_perm.permute(0, 2, 3, 1).contiguous()
     return dx, dvalues
 
 
 class BlockSparseConv1dFn(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, coo_block_coords, values, kernel_shape,
-                BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16):
+                BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16,
+                BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None):
         y = block_sparse_conv_1d_forward(
             x, coo_block_coords, values, kernel_shape,
             BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE
@@ -210,6 +218,8 @@ class BlockSparseConv1dFn(torch.autograd.Function):
         ctx.BLOCK_SIZE_M = BLOCK_SIZE_M
         ctx.BLOCK_SIZE_N = BLOCK_SIZE_N
         ctx.NZB_BLOCK_SIZE = NZB_BLOCK_SIZE
+        ctx.BLOCK_SIZE_N_DX = BLOCK_SIZE_N_DX
+        ctx.BLOCK_SIZE_N_DVALUES = BLOCK_SIZE_N_DVALUES
         return y
 
     @staticmethod
@@ -217,14 +227,20 @@ class BlockSparseConv1dFn(torch.autograd.Function):
         x, coo_block_coords, values = ctx.saved_tensors
         dx, dvalues = block_sparse_conv_1d_backward(
             dy, x, coo_block_coords, values,
-            ctx.BLOCK_SIZE_M, ctx.BLOCK_SIZE_N, ctx.NZB_BLOCK_SIZE
+            ctx.BLOCK_SIZE_M, ctx.BLOCK_SIZE_N, ctx.NZB_BLOCK_SIZE,
+            needs_dx=ctx.needs_input_grad[0],
+            needs_dvalues=ctx.needs_input_grad[2],
+            BLOCK_SIZE_N_DX=ctx.BLOCK_SIZE_N_DX,
+            BLOCK_SIZE_N_DVALUES=ctx.BLOCK_SIZE_N_DVALUES,
         )
         # None for non-tensor args
-        return dx, None, dvalues, None, None, None, None
+        return dx, None, dvalues, None, None, None, None, None, None
 
 def block_sparse_conv_1d(x, coo_block_coords, values, kernel_shape,
-                         BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16):
+                         BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16,
+                         BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None):
     return BlockSparseConv1dFn.apply(
         x, coo_block_coords, values, kernel_shape,
-        BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE
+        BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE,
+        BLOCK_SIZE_N_DX, BLOCK_SIZE_N_DVALUES
     )

@@ -17,6 +17,10 @@ class LTIRouter(nn.Module):
                  block_size=16,
                  block_f=128,
                  cascade=1,
+                 conv_imp="auto",
+                 block_n=None,
+                 block_n_dx=None,
+                 block_n_dw=None,
                  **kwargs):
         """Initialize the router with aggregation and convolution settings.
 
@@ -35,7 +39,10 @@ class LTIRouter(nn.Module):
                                         dt=dt, cascade=cascade, 
                                         sampling_mode=sampling_mode,
                                         block_f=block_f)
-        self.conv = BlockSparseCausalConv()
+        self.conv = BlockSparseCausalConv(conv_imp=conv_imp,
+                                          block_n=block_n,
+                                          block_n_dx=block_n_dx,
+                                          block_n_dw=block_n_dw)
 
     def forward(self, runoff: torch.Tensor, g, params=None) -> torch.Tensor:
         """Compute routed discharge for a set of runoff inputs.
