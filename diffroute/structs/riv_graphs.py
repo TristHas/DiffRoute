@@ -190,7 +190,8 @@ def init_params_from_df(param_df, model_name=None, param_names=None, nodes_idx=N
     if not set(param_names).issubset(param_df.columns):
         print(f"WARNING - init_params_from_df - param_names ({param_names}) not included in param_df.columns ({param_df.columns})")
     params = param_df.loc[nodes_idx.index].reindex(columns=param_names, fill_value=0)
-    return torch.from_numpy(params.values).float()
+    params_array = params.to_numpy(dtype=np.float32, copy=True)
+    return torch.from_numpy(params_array)
 
 def read_params(g, model_name, nodes_idx):
     """Retrieve parameters from the graph or compute defaults.
