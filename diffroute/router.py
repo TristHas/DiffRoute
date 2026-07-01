@@ -43,6 +43,57 @@ class LTIRouter(nn.Module):
                                           block_n=block_n,
                                           block_n_dx=block_n_dx,
                                           block_n_dw=block_n_dw)
+        self._kernel_cache = {"key": None, "value": None}
+
+    def clear_kernel_cache(self) -> None:
+        """Drop any cached non-gradient block-sparse routing kernel."""
+        self._kernel_cache["key"] = None
+        self._kernel_cache["value"] = None
+
+    def _kernel_cache_key(self, g, params: torch.Tensor, device: torch.device):
+        return (
+            id(g),
+            getattr(g, "irf_fn", None),
+            bool(getattr(g, "include_index_diag", True)),
+            getattr(g, "prefix_jump_rounds", None),
+            int(g.edges.data_ptr()),
+            int(getattr(g.edges, "_version", 0)),
+            tuple(g.edges.shape),
+            int(g.path_cumsum.data_ptr()),
+            int(getattr(g.path_cumsum, "_version", 0)),
+            tuple(g.path_cumsum.shape),
+            int(params.data_ptr()),
+            int(getattr(params, "_version", 0)),
+            tuple(params.shape),
+            tuple(params.stride()),
+            int(params.storage_offset()),
+            str(params.dtype),
+            str(params.device),
+            str(device),
+            self.block_size,
+            self.aggregator.max_delay,
+            self.aggregator.dt,
+            self.aggregator.cascade,
+            self.aggregator.block_f,
+            self.aggregator.sampler.factor,
+            self.aggregator.sampler.out_mode,
+        )
+
+    def _block_sparse_kernel(self, g, params: torch.Tensor, device: torch.device):
+        if params.requires_grad:
+            kernel = self.aggregator(g, params).to(device)
+            return kernel.to_block_sparse(self.block_size)
+
+        key = self._kernel_cache_key(g, params, device)
+        if self._kernel_cache["key"] == key:
+            return self._kernel_cache["value"]
+
+        with torch.no_grad():
+            kernel = self.aggregator(g, params).to(device)
+            block_kernel = kernel.to_block_sparse(self.block_size)
+        self._kernel_cache["key"] = key
+        self._kernel_cache["value"] = block_kernel
+        return block_kernel
 
     def forward(self, runoff: torch.Tensor, g, params=None) -> torch.Tensor:
         """Compute routed discharge for a set of runoff inputs.
@@ -69,11 +120,12 @@ class LTIRouter(nn.Module):
         if runoff.ndim < 3:
             raise ValueError(f"runoff must be [..., C, T] with at least one "
                              f"leading batch dimension, got {runoff.shape}")
+        if params is None:
+            params = g.params
         *lead, C, T = runoff.shape
         x = runoff.contiguous().view(-1, C, T)            # merge leading dims -> [B, C, T]
-        # Stage 1: Aggregate kernel
-        kernel = self.aggregator(g, params).to(x.device)
-        kernel = kernel.to_block_sparse(self.block_size)
+        # Stage 1: Aggregate and blockize the routing kernel.
+        kernel = self._block_sparse_kernel(g, params, x.device)
         # Stage 2: Convolution
         y = self.conv(x, kernel)
         # Handle residual if needed
