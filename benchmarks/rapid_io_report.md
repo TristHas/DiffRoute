@@ -102,6 +102,10 @@ specialization. The final state additionally uses:
 
 - a column-CSR, no-atomic sparse-conv `dX` kernel;
 - a `B == 1` time-reduction sparse-conv `dW` kernel;
+- fused aggregation post-processing backward for ReLU, triangular downsampling,
+  flip, and normalization;
+- saved pointer-jump tables for prefix-sum backward instead of one launch per
+  graph depth level;
 - hardware auto dispatch on GB200:
   - forward `BLOCK_SIZE_N=256`;
   - `dX` `BLOCK_SIZE_N=256`;
@@ -109,16 +113,16 @@ specialization. The final state additionally uses:
 
 | Measurement | Initial ms | Pre-backward-opt ms | Final ms | Speedup vs initial |
 |---|---:|---:|---:|---:|
-| Full forward | 303.19 | 203.21 | 200.57 | 1.51x |
-| Full backward `dL/dX` | 1712.97 | 799.98 | 169.41 | 10.11x |
-| Full backward `dL/dparams` | 1902.61 | 854.87 | 675.33 | 2.82x |
-| Aggregation forward | 25.57 | 25.62 | 22.43 | 1.14x |
-| Blockize forward | 1.55 | 1.57 | 1.95 | 0.79x |
+| Full forward | 303.19 | 203.21 | 200.69 | 1.51x |
+| Full backward `dL/dX` | 1712.97 | 799.98 | 169.33 | 10.12x |
+| Full backward `dL/dparams` | 1902.61 | 854.87 | 512.36 | 3.71x |
+| Aggregation forward | 25.57 | 25.62 | 22.51 | 1.14x |
+| Blockize forward | 1.55 | 1.57 | 1.96 | 0.79x |
 | Convolution forward | 276.37 | 176.39 | 176.36 | 1.57x |
-| Aggregation backward `dL/dparams` | 190.94 | 191.43 | 190.76 | 1.00x |
+| Aggregation backward `dL/dparams` | 190.94 | 191.43 | 34.12 | 5.60x |
 | Blockize backward | 0.31 | 0.31 | 0.31 | 1.00x |
-| Convolution backward `dL/dX` | 1713.92 | 801.01 | 170.34 | 10.06x |
-| Convolution backward `dL/dW` | 1713.93 | 666.10 | 486.32 | 3.52x |
+| Convolution backward `dL/dX` | 1713.92 | 801.01 | 170.35 | 10.06x |
+| Convolution backward `dL/dW` | 1713.93 | 666.10 | 486.33 | 3.52x |
 
 Isolated kernel benchmarks on the RAPID shape:
 
@@ -126,6 +130,14 @@ Isolated kernel benchmarks on the RAPID shape:
 |---|---:|---:|---:|
 | `dX` sparse convolution | 799.16 | 168.79 | 4.73x |
 | `dW` sparse convolution | 663.87 | 484.66 | 1.37x |
+
+Short-sequence (`T=500`) result after aggregation optimization:
+
+| Measurement | Before aggregation opt ms | Final ms | Speedup |
+|---|---:|---:|---:|
+| Full backward `dL/dparams` | 200.60 | 43.58 | 4.60x |
+| Aggregation backward `dL/dparams` | 190.25 | 34.25 | 5.55x |
+| Convolution backward `dL/dW` | 11.07 | 11.07 | 1.00x |
 
 ## Analysis
 
@@ -165,18 +177,27 @@ tap, reduces over time internally, and stores the gradient once. It is a
 smaller win than `dX` because each program carries a 16x16 accumulator through
 a long time loop, but it removes the time-tile atomic accumulation.
 
+Aggregation backward was optimized in two places. First, the post-processing
+backward now fuses normalization, flip, triangular downsample backward, and
+ReLU masking in a Triton kernel. Nsight Systems had shown the previous cuDNN
+triangular-downsample input-gradient as the largest single aggregation-backward
+kernel. Second, `prefix_sum` backward now saves the forward pointer-jump tables
+and reverses those rounds. This replaces one launch per RAPID graph depth level
+with one launch per pointer-jump round.
+
 Current remaining bottlenecks:
 
 - full forward is now almost entirely sparse convolution;
 - full `dL/dX` is no longer imbalanced relative to forward (`169 ms` vs
   `201 ms`);
-- full `dL/dparams` is sparse-conv `dW` (`486 ms`) plus about `191 ms` of
-  aggregation backward.
+- full `dL/dparams` is now sparse-conv `dW` dominated: about `486 ms` of
+  `dW` convolution plus about `34 ms` aggregation backward.
 
 Aggregation forward is small for this workload. Aggregation backward is still
-meaningful for training routing parameters, but it is no longer the dominant
-cost by itself. The next optimization target should be `dW`, followed by
-aggregation backward if parameter-training throughput is still the priority.
+meaningful for short sequences, but after the pointer-jump change it is no
+longer the dominant long-sequence cost. The next long-sequence optimization
+target should return to `dW`; for short sequences, aggregation and fixed
+overheads are now in the same range as convolution.
 
 ## Dispatch Architecture
 
