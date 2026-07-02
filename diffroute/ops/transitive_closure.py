@@ -15,6 +15,7 @@ def _coo_enum_exp_kernel(
     n_nodes,
     n_freq: tl.constexpr,
     INCLUDE_SELF: tl.constexpr,
+    STORE_COORDS: tl.constexpr,
     BLOCK_FREQ: tl.constexpr,
 ):
     pid = tl.program_id(0)
@@ -28,8 +29,9 @@ def _coo_enum_exp_kernel(
 
     while dest != -1:
         row = base + step
-        tl.store(coords_ptr + row * 2 + 0, dest)
-        tl.store(coords_ptr + row * 2 + 1, pid)
+        if STORE_COORDS:
+            tl.store(coords_ptr + row * 2 + 0, dest)
+            tl.store(coords_ptr + row * 2 + 1, pid)
 
         child = tl.load(edges_ptr + dest, mask=(dest >= 0) & (dest < n_nodes), other=-1)
         for f0 in range(0, n_freq, BLOCK_FREQ):
@@ -83,7 +85,8 @@ def closure_sub_exp(prefix: torch.Tensor,
                     edges: torch.Tensor,
                     path_cumsum: torch.Tensor,
                     include_self: bool = True,
-                    block_f: int = 128):
+                    block_f: int = 128,
+                    return_coords: bool = True):
     prefix = prefix.contiguous()
     edges = edges.contiguous()
     path_cumsum = path_cumsum.contiguous()
@@ -91,7 +94,10 @@ def closure_sub_exp(prefix: torch.Tensor,
     n, f = prefix.shape
     n_freq = f // 2
     n_path = int(path_cumsum[-1].item())
-    coords = torch.empty((n_path, 2), dtype=path_cumsum.dtype, device=prefix.device)
+    if return_coords:
+        coords = torch.empty((n_path, 2), dtype=path_cumsum.dtype, device=prefix.device)
+    else:
+        coords = torch.empty((1, 2), dtype=path_cumsum.dtype, device=prefix.device)
     freq_pairs = torch.empty((n_path, n_freq, 2), dtype=prefix.dtype, device=prefix.device)
     block_freq = max(1, min(block_f // 2, triton.next_power_of_2(n_freq)))
 
@@ -105,9 +111,10 @@ def closure_sub_exp(prefix: torch.Tensor,
             n,
             n_freq,
             INCLUDE_SELF=include_self,
+            STORE_COORDS=return_coords,
             BLOCK_FREQ=block_freq,
         )
-    return coords, torch.view_as_complex(freq_pairs)
+    return (coords if return_coords else None), torch.view_as_complex(freq_pairs)
 
 def transitive_closure(irf, edges, path_cumsum,
                           include_self=True, block_f=128,
@@ -134,7 +141,8 @@ def log_transitive_closure(irfs_freq, edges, path_cumsum,
 
 def log_transitive_closure_no_grad(irfs_freq, edges, path_cumsum,
                                    *, include_self=True, block_f=128,
-                                   prefix_rounds=None):
+                                   prefix_rounds=None,
+                                   return_coords=True):
     log_irfs_freq = stable_log_flattened(irfs_freq)
     prefix = prefix_sum(log_irfs_freq, edges, block_f, prefix_rounds)
-    return closure_sub_exp(prefix, edges, path_cumsum, include_self, block_f)
+    return closure_sub_exp(prefix, edges, path_cumsum, include_self, block_f, return_coords)

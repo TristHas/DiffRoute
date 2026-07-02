@@ -13,7 +13,8 @@ def aggregate_irf(params, irf_fn,
                   cascade=1,
                   include_index_diag=True,
                   block_f=128,
-                  prefix_rounds=None):
+                  prefix_rounds=None,
+                  return_coords=True):
     """
     """
     irfs = irf_fn(params, time_window=time_window, dt=dt).squeeze()
@@ -26,12 +27,21 @@ def aggregate_irf(params, irf_fn,
         if irfs_freq.requires_grad
         else log_transitive_closure_no_grad
     )
-    coords, irfs_freq_agg = closure(
-        irfs_freq, edges, path_cumsum,
-        include_self=include_index_diag,
-        block_f=block_f,
-        prefix_rounds=prefix_rounds,
-    )
+    if closure is log_transitive_closure_no_grad:
+        coords, irfs_freq_agg = closure(
+            irfs_freq, edges, path_cumsum,
+            include_self=include_index_diag,
+            block_f=block_f,
+            prefix_rounds=prefix_rounds,
+            return_coords=return_coords,
+        )
+    else:
+        coords, irfs_freq_agg = closure(
+            irfs_freq, edges, path_cumsum,
+            include_self=include_index_diag,
+            block_f=block_f,
+            prefix_rounds=prefix_rounds,
+        )
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
     return coords, irfs_agg
 
@@ -103,6 +113,10 @@ class IRFAggregator(nn.Module):
             params = g.params
         block_size = self.block_size if block_size is None else block_size
         irf_fn = IRF_FN[g.irf_fn]
+        kernel_size = (len(g), len(g), self.max_delay)
+        cache = getattr(g, "_block_sparse_metadata_cache", None)
+        key = (block_size, tuple(kernel_size), str(params.device))
+        block_metadata = None if cache is None else cache.get(key)
 
         coords, irfs_agg = aggregate_irf( params,
                                           irf_fn=irf_fn,
@@ -113,10 +127,11 @@ class IRFAggregator(nn.Module):
                                           cascade=self.cascade,
                                           include_index_diag=g.include_index_diag,
                                           block_f=self.block_f,
-                                          prefix_rounds=getattr(g, "prefix_jump_rounds", None))
+                                          prefix_rounds=getattr(g, "prefix_jump_rounds", None),
+                                          return_coords=block_metadata is None)
 
-        kernel_size = (len(g), len(g), (irfs_agg.shape[-1] - 1) // self.sampler.factor + 1)
-        block_metadata = self._get_block_metadata(g, coords, kernel_size, block_size)
+        if block_metadata is None:
+            block_metadata = self._get_block_metadata(g, coords, kernel_size, block_size)
         n_block_cells = block_metadata["block_indices"].shape[0] * block_size * block_size
         flat_values = self.sampler.kernel_postprocess_block_values(
             irfs_agg,

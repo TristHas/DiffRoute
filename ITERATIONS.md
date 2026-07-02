@@ -161,3 +161,13 @@
 - Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=20.28672899518694`, median `16.782751083374023`, min `16.73846435546875`. The direct router path is not reflected by `substep.blockize.forward`, which still times `SparseKernel.to_block_sparse()` separately; substep medians were `aggregation.forward=13.339167594909668`, `blockize.forward=0.711135983467102`, and `convolution.forward=3.5332159996032715`.
 - Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `16.782751083374023 ms`, a `1.43x` speedup and `30.2%` latency reduction. Compared with iteration 15, this reduces full-forward median by `3.7%`.
 - Notes: This still recomputes per-call routing values. It only fuses the no-gradient sampled-value materialization with the block-sparse scatter.
+
+## Iteration 17 - Skip cached closure coordinates in direct forward
+
+- Target: detached-parameter direct block-sparse aggregation path.
+- Hypothesis: Once block-packing topology metadata is cached, the no-gradient direct path does not need closure coordinates on subsequent forwards. Skipping coordinate allocation and stores should shave a small amount of memory traffic from closure enumeration.
+- Change: Added a `STORE_COORDS` constexpr to `_coo_enum_exp_kernel` and plumbed `return_coords=False` through `log_transitive_closure_no_grad` and `aggregate_irf`. `IRFAggregator.block_sparse_forward` now requests coordinates only when topology metadata is missing.
+- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `conv_forward_max_abs_vs_torch=6.603659130632877e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, `conv_backward_dw_max_abs_vs_torch=5.21540641784668e-08`, and finite parameter gradients.
+- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=20.229390008108957`, median `16.708160400390625`, min `16.683359146118164`; substep medians were `aggregation.forward=13.29372787475586`, `blockize.forward=0.7061439752578735`, and `convolution.forward=3.53273606300354`.
+- Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `16.708160400390625 ms`, a `1.44x` speedup and `30.6%` latency reduction. Compared with iteration 16, this reduces full-forward median by only `0.4%`.
+- Notes: The small gain confirms coordinate writes are not a major remaining bottleneck; `irfft` is still the dominant floor.
