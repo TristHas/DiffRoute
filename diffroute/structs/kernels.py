@@ -181,6 +181,9 @@ class BlockSparseKernel(nn.Module):
             BlockSparseKernel: Block-sparse representation built from inputs.
         """
         values = values.flip(-1) if flip_values else values
+        if coords.is_cuda and values.is_cuda and size is not None and coords.numel() > 0:
+            return cls._from_coo_dense_keys(coords, values, block_size, size)
+
         B = block_size
         ks = values.shape[-1]
         
@@ -202,6 +205,55 @@ class BlockSparseKernel(nn.Module):
             size = (max_coords[0].item(), max_coords[1].item(), ks)
 
         return cls(unique_blocks, block_values, block_size, size)
+
+    @classmethod
+    def _from_coo_dense_keys(cls, coords, values, block_size, size):
+        """CUDA COO-to-block conversion using a dense block-key map."""
+        B = block_size
+        H, W, ks = size
+        n_row_blocks = (int(H) + B - 1) // B
+        n_col_blocks = (int(W) + B - 1) // B
+
+        block_coords = coords // B
+        block_local_coords = coords % B
+        block_keys = (
+            block_coords[:, 0].long() * n_col_blocks + block_coords[:, 1].long()
+        ).contiguous()
+
+        present = torch.zeros(
+            (n_row_blocks * n_col_blocks,),
+            dtype=torch.bool,
+            device=coords.device,
+        )
+        present.scatter_(0, block_keys, True)
+        unique_keys = torch.nonzero(present, as_tuple=False).flatten()
+        n_blocks = unique_keys.numel()
+
+        key_to_block = torch.empty_like(present, dtype=torch.long)
+        key_to_block[unique_keys] = torch.arange(
+            n_blocks,
+            dtype=torch.long,
+            device=coords.device,
+        )
+        block_indices = torch.stack(
+            (unique_keys // n_col_blocks, unique_keys % n_col_blocks),
+            dim=1,
+        ).to(coords.dtype)
+
+        linear_indices = (
+            key_to_block[block_keys] * (B * B)
+            + block_local_coords[:, 0].long() * B
+            + block_local_coords[:, 1].long()
+        )
+        block_values = torch.zeros(
+            (n_blocks * B * B, ks),
+            dtype=values.dtype,
+            device=values.device,
+        )
+        block_values = block_values.index_put((linear_indices,), values)
+        block_values = block_values.reshape(n_blocks, B, B, ks)
+
+        return cls(block_indices, block_values, block_size, size)
 
     @classmethod
     def from_sparse_kernel(cls, kernel, block_size):
