@@ -15,7 +15,7 @@ class LTIRouter(nn.Module):
                  dt=1,
                  sampling_mode="avg",
                  block_size=16,
-                 block_f=128,
+                 block_f=512,
                  cascade=1,
                  conv_imp="auto",
                  block_n=None,

@@ -121,3 +121,13 @@
 - Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 5 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=25.902253341674804`, median `21.44825553894043`, min `21.388704299926758`; `substep.aggregation.forward mean_ms=19.839289283752443`, median `15.391263961791992`.
 - Baseline comparison: this is slower than iteration 11 (`21.448 ms` vs `21.136 ms` median), so the fused closure+exp kernel is not a win in its current form. It remains faster than the original baseline only because iteration 11's fused sampler is still present.
 - Notes: The custom Triton exp/sincos work and per-row path loop do not beat PyTorch's separate closure and complex exponential kernels here. This path should be reverted unless a later tuning iteration makes it faster.
+
+## Iteration 13 - Forward aggregation block_f 512 default
+
+- Target: valid recompute-every-call forward aggregation.
+- Hypothesis: The fused closure+exp path from iteration 12 needs a wider feature tile to amortize per-path overhead. Probes showed `block_f=512` improved no-gradient forward without the severe `dL/dparams` slowdown seen at `block_f=1024`.
+- Change: Updated the model and RAPID benchmark defaults from `block_f=128` to `512`.
+- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `full_repeat_max_abs=4.3655745685100555e-11`, `conv_forward_max_abs_vs_torch=6.596383173018694e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, and finite parameter gradients.
+- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=22.7772159576416`, median `19.28179168701172`, min `19.23075294494629`; `substep.aggregation.forward mean_ms=16.790463992527553`, median `13.285663604736328`; `substep.convolution.forward median=4.171520233154297`. Focused aggregation breakdown reported `aggregator.forward.total` median `13.241 ms`, `aggregate_irf.pre_sampler` median `10.939 ms`, and `temporal_sampler.total` median `2.466 ms`.
+- Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `19.28179168701172 ms`, a `1.25x` speedup and `19.9%` latency reduction. Compared with iteration 11 median `21.136159896850586 ms`, this is another `8.8%` faster.
+- Notes: The remaining dominant cost is still `irfft` at about `7.53 ms` median, followed by sparse convolution at about `4.17 ms`.

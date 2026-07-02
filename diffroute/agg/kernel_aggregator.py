@@ -42,7 +42,7 @@ class IRFAggregator(nn.Module):
                  dt=1,
                  sampling_mode="avg",
                  cascade=1,
-                 block_f=128,
+                 block_f=512,
                  **kwargs):
         """
             g (nx.Digraph): river network stage graph

@@ -457,7 +457,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dt", type=float, default=1 / 24)
     parser.add_argument("--sampling-mode", default="avg")
     parser.add_argument("--block-size", type=int, default=16)
-    parser.add_argument("--block-f", type=int, default=128)
+    parser.add_argument("--block-f", type=int, default=512)
     parser.add_argument("--log-epsilon", type=float, default=1e-8)
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--trials", type=int, default=7)

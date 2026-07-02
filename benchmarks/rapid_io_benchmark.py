@@ -571,7 +571,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--block-n", type=int, default=None)
     parser.add_argument("--block-n-dx", type=int, default=None)
     parser.add_argument("--block-n-dw", type=int, default=None)
-    parser.add_argument("--block-f", type=int, default=128)
+    parser.add_argument("--block-f", type=int, default=512)
     parser.add_argument("--conv-impl", choices=("auto", "triton", "torch"), default="auto")
     parser.add_argument("--warmup", type=int, default=1)
     parser.add_argument("--trials", type=int, default=5)
