@@ -1,5 +1,13 @@
 # DiffRoute RAPID IO Kernel Optimization Iterations
 
+## Forward Optimization Constraints
+
+- Do not cache routing kernels, graph topology conversions, blockization metadata, closure coordinates, sampled values, or any other forward artifact across calls. `LTIRouter.forward` must be correct when each invocation receives a different graph.
+- Treat each forward as independent of previous execution. Optimizations must recompute all graph-dependent aggregation and sparse-conversion state from the current inputs.
+- Keep the torch-level router and aggregator code lean and maintainable. Prefer low-level kernel improvements in `diffroute/ops`, sparse conversion, and sparse convolution over adding multiple high-level execution paths.
+- Avoid separate grad/no-grad forward paths unless the speedup is large enough to justify the extra maintenance burden and the behavior remains easy to reason about.
+- Benchmark torch-native or `torch.compile` fusion before keeping a custom Triton forward fusion for simple elementwise/reduction chains. Keep custom kernels when they provide a material improvement or are needed for backward performance.
+
 ## Iteration 1 - Column-grouped dX atomics
 
 - Target: `block_sparse_conv_1d_bwd_dx_kernel`
@@ -111,7 +119,6 @@
 - Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 5 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=25.819981002807616`, median `21.136159896850586`, min `21.001920700073242`; `substep.aggregation.forward mean_ms=19.741049194335936`, median `15.212384223937988`. Focused aggregation breakdown reported `temporal_sampler.total` median `2.469 ms`, down from the valid pre-iteration median `4.639 ms`.
 - Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `21.136159896850586 ms`, a `1.14x` speedup and `12.1%` latency reduction. Compared with iteration 10 median `23.327775955200195 ms`, this iteration reduces valid full-forward latency by `9.4%`.
 - Notes: This removes roughly half of temporal postprocess latency, but aggregation is now dominated by `irfft` and the large frequency-to-time materialization.
-
 ## Iteration 12 - Fused closure and complex exponential no-grad path
 
 - Target: no-gradient aggregation forward between prefix-sum and `irfft`.
@@ -120,7 +127,7 @@
 - Correctness: A direct comparison against the existing closure+exp path gave `coords_equal=True`, `freq_max_abs=1.6858739115832577e-07`, and postprocess `max_abs=3.5762786865234375e-07`. `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `conv_forward_max_abs_vs_torch=6.599293556064367e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, and finite parameter gradients.
 - Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 5 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=25.902253341674804`, median `21.44825553894043`, min `21.388704299926758`; `substep.aggregation.forward mean_ms=19.839289283752443`, median `15.391263961791992`.
 - Baseline comparison: this is slower than iteration 11 (`21.448 ms` vs `21.136 ms` median), so the fused closure+exp kernel is not a win in its current form. It remains faster than the original baseline only because iteration 11's fused sampler is still present.
-- Notes: The custom Triton exp/sincos work and per-row path loop do not beat PyTorch's separate closure and complex exponential kernels here. This path should be reverted unless a later tuning iteration makes it faster.
+- Notes: Removed from the current code base after review because it introduced a separate no-grad path, made the torch-level aggregation code less maintainable, and did not improve runtime by itself.
 
 ## Iteration 13 - Forward aggregation block_f 512 default
 
@@ -141,33 +148,3 @@
 - Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=22.123853955950057`, median `18.609600067138672`, min `18.58483123779297`; `substep.aggregation.forward median=13.27990436553955`, `substep.blockize.forward median=1.8888319730758667`, and `substep.convolution.forward median=3.524319887161255`. The isolated convolution benchmark reported `mean_ms=3.5101919889450075`, median `3.510767936706543`.
 - Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `18.609600067138672 ms`, a `1.29x` speedup and `22.6%` latency reduction. Compared with iteration 13, this reduces full-forward median by `3.5%`.
 - Notes: This is a forward launch-shape win. The optimized RAPID `dX` and `dW` paths do not use this grouping in their hot kernels.
-
-## Iteration 15 - Cache blockization topology metadata
-
-- Target: sparse COO-to-block-sparse conversion after per-call aggregation.
-- Hypothesis: Kernel values must be recomputed every forward call, but the COO-to-block packing map is fixed graph topology. Reusing only block indices, linear scatter indices, and column metadata should remove repeated `torch.unique`/mapping work while still building fresh `block_values` from current IRF values every call.
-- Change: `SparseKernel` now carries optional block metadata. `BlockSparseKernel.make_block_metadata` precomputes block indices, linear scatter indices, column order, and column offsets. `IRFAggregator.forward` caches this topology metadata on the graph by block size, kernel size, and device, then returns it with each freshly computed `SparseKernel`. `BlockSparseKernel.from_coo` uses the metadata when present but still scatters the current values into a new `block_values` tensor.
-- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `conv_forward_max_abs_vs_torch=6.600748747587204e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, `conv_backward_dw_max_abs_vs_torch=5.21540641784668e-08`, and finite parameter gradients.
-- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=20.94447980608259`, median `17.429119110107422`, min `17.390111923217773`; `substep.aggregation.forward median=13.304703712463379`, `substep.blockize.forward median=0.7131839990615845`, and `substep.convolution.forward median=3.5379838943481445`.
-- Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `17.429119110107422 ms`, a `1.38x` speedup and `27.6%` latency reduction. Compared with iteration 14, this reduces full-forward median by `6.3%`.
-- Notes: This is not a routing-kernel value cache. It caches only graph-topology packing metadata and still recomputes/scatters current per-call kernel values.
-
-## Iteration 16 - Direct no-grad sampler to block values
-
-- Target: detached-parameter router forward after `irfft`.
-- Hypothesis: In no-gradient forward, the router immediately converts sampled sparse path values into block-sparse values. The sampled `[paths, 32]` tensor and separate blockize scatter can be avoided by writing the fused temporal sampler output directly into freshly allocated block-sparse value storage using the cached topology scatter indices.
-- Change: Added `_down_tri_relu_flip_norm_block_fwd_kernel` and `SubResolutionSampler.kernel_postprocess_block_values`. Added `IRFAggregator.block_sparse_forward`, which recomputes aggregation values every call, uses cached topology metadata, and fills a new `BlockSparseKernel` directly. `LTIRouter.forward` uses this direct block-sparse path only when `params.requires_grad` is false; parameter-gradient runs keep the differentiable `SparseKernel -> to_block_sparse` path.
-- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `conv_forward_max_abs_vs_torch=6.600748747587204e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, `conv_backward_dw_max_abs_vs_torch=5.21540641784668e-08`, and finite parameter gradients.
-- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=20.28672899518694`, median `16.782751083374023`, min `16.73846435546875`. The direct router path is not reflected by `substep.blockize.forward`, which still times `SparseKernel.to_block_sparse()` separately; substep medians were `aggregation.forward=13.339167594909668`, `blockize.forward=0.711135983467102`, and `convolution.forward=3.5332159996032715`.
-- Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `16.782751083374023 ms`, a `1.43x` speedup and `30.2%` latency reduction. Compared with iteration 15, this reduces full-forward median by `3.7%`.
-- Notes: This still recomputes per-call routing values. It only fuses the no-gradient sampled-value materialization with the block-sparse scatter.
-
-## Iteration 17 - Skip cached closure coordinates in direct forward
-
-- Target: detached-parameter direct block-sparse aggregation path.
-- Hypothesis: Once block-packing topology metadata is cached, the no-gradient direct path does not need closure coordinates on subsequent forwards. Skipping coordinate allocation and stores should shave a small amount of memory traffic from closure enumeration.
-- Change: Added a `STORE_COORDS` constexpr to `_coo_enum_exp_kernel` and plumbed `return_coords=False` through `log_transitive_closure_no_grad` and `aggregate_irf`. `IRFAggregator.block_sparse_forward` now requests coordinates only when topology metadata is missing.
-- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `conv_forward_max_abs_vs_torch=6.603659130632877e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, `conv_backward_dw_max_abs_vs_torch=5.21540641784668e-08`, and finite parameter gradients.
-- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 7 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=20.229390008108957`, median `16.708160400390625`, min `16.683359146118164`; substep medians were `aggregation.forward=13.29372787475586`, `blockize.forward=0.7061439752578735`, and `convolution.forward=3.53273606300354`.
-- Baseline comparison: original `T=500` baseline full forward median was `24.058048248291016 ms`; current valid median is `16.708160400390625 ms`, a `1.44x` speedup and `30.6%` latency reduction. Compared with iteration 16, this reduces full-forward median by only `0.4%`.
-- Notes: The small gain confirms coordinate writes are not a major remaining bottleneck; `irfft` is still the dominant floor.
