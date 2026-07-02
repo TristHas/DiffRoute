@@ -6,6 +6,48 @@ import triton.language as tl
 
 
 @triton.jit
+def _down_tri_relu_flip_norm_fwd_kernel(
+    x_ptr,
+    out_ptr,
+    denom_ptr,
+    n_rows: tl.int32,
+    n_time: tl.int32,
+    n_out: tl.int32,
+    FACTOR: tl.constexpr,
+    BLOCK_ROWS: tl.constexpr,
+    BLOCK_OUT: tl.constexpr,
+):
+    rows = tl.program_id(0) * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)[:, None]
+    out_cols = tl.arange(0, BLOCK_OUT)[None, :]
+    row_mask = rows < n_rows
+    out_mask = out_cols < n_out
+
+    pad = FACTOR - 1
+    kernel_size = 2 * FACTOR - 1
+    acc = tl.zeros((BLOCK_ROWS, BLOCK_OUT), dtype=tl.float32)
+
+    for u in range(0, kernel_size):
+        t = out_cols * FACTOR + u - pad
+        valid = row_mask & out_mask & (t >= 0) & (t < n_time)
+        x = tl.load(x_ptr + rows * n_time + t, mask=valid, other=0.0)
+        x = tl.maximum(x, 0.0)
+        dist = tl.abs(u - pad).to(tl.float32)
+        weight = (FACTOR - dist) / FACTOR
+        acc += x * weight
+
+    denom = tl.sum(acc, axis=1)[:, None]
+    tl.store(denom_ptr + rows, denom, mask=row_mask)
+
+    flipped_cols = n_out - 1 - out_cols
+    out = acc / denom
+    tl.store(
+        out_ptr + rows * n_out + flipped_cols,
+        out,
+        mask=row_mask & out_mask,
+    )
+
+
+@triton.jit
 def _down_tri_relu_bwd_kernel(
     grad_down_ptr,
     x_ptr,
@@ -50,16 +92,40 @@ def _down_tri_relu_bwd_kernel(
 class _DownTriReluFlipNormalize(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x: torch.Tensor, tri_kernel: torch.Tensor, factor: int):
-        relu_x = torch.relu(x)
-        down = F.conv1d(
-            relu_x.unsqueeze(1),
-            tri_kernel,
-            stride=factor,
-            padding=factor - 1,
-        ).squeeze(1)
-        z = down.flip(-1)
-        denom = z.sum(-1, keepdim=True)
-        out = z / denom
+        if x.is_cuda and x.ndim == 2:
+            x = x.contiguous()
+            n_rows, n_time = x.shape
+            n_out = (n_time - 1) // factor + 1
+            out = torch.empty((n_rows, n_out), dtype=x.dtype, device=x.device)
+            denom = torch.empty((n_rows, 1), dtype=x.dtype, device=x.device)
+
+            block_rows = 8
+            block_out = triton.next_power_of_2(n_out)
+            grid = (triton.cdiv(n_rows, block_rows),)
+            with torch.cuda.device(x.device):
+                _down_tri_relu_flip_norm_fwd_kernel[grid](
+                    x,
+                    out,
+                    denom,
+                    n_rows,
+                    n_time,
+                    n_out,
+                    FACTOR=factor,
+                    BLOCK_ROWS=block_rows,
+                    BLOCK_OUT=block_out,
+                    num_warps=8,
+                )
+        else:
+            relu_x = torch.relu(x)
+            down = F.conv1d(
+                relu_x.unsqueeze(1),
+                tri_kernel,
+                stride=factor,
+                padding=factor - 1,
+            ).squeeze(1)
+            z = down.flip(-1)
+            denom = z.sum(-1, keepdim=True)
+            out = z / denom
         ctx.save_for_backward(x, out, denom)
         ctx.factor = factor
         return out
