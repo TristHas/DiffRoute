@@ -3,6 +3,7 @@ from torch import nn as nn
 
 from .temporal_sampler import SubResolutionSampler
 from ..ops import log_transitive_closure
+from ..ops.transitive_closure import log_transitive_closure_no_grad
 from ..irfs import IRF_FN
 from ..structs import SparseKernel
 
@@ -20,7 +21,12 @@ def aggregate_irf(params, irf_fn,
     assert time_window_expanded == time_window * int( 1 / dt )
 
     irfs_freq = torch.fft.rfft(irfs, n=time_window_expanded, dim=-1)
-    coords, irfs_freq_agg = log_transitive_closure(
+    closure = (
+        log_transitive_closure
+        if irfs_freq.requires_grad
+        else log_transitive_closure_no_grad
+    )
+    coords, irfs_freq_agg = closure(
         irfs_freq, edges, path_cumsum,
         include_self=include_index_diag,
         block_f=block_f,
