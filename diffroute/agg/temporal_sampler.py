@@ -48,6 +48,47 @@ def _down_tri_relu_flip_norm_fwd_kernel(
 
 
 @triton.jit
+def _down_tri_relu_flip_norm_block_fwd_kernel(
+    x_ptr,
+    linear_indices_ptr,
+    block_values_ptr,
+    n_rows: tl.int32,
+    n_time: tl.int32,
+    n_out: tl.int32,
+    FACTOR: tl.constexpr,
+    BLOCK_ROWS: tl.constexpr,
+    BLOCK_OUT: tl.constexpr,
+):
+    rows = tl.program_id(0) * BLOCK_ROWS + tl.arange(0, BLOCK_ROWS)[:, None]
+    out_cols = tl.arange(0, BLOCK_OUT)[None, :]
+    row_mask = rows < n_rows
+    out_mask = out_cols < n_out
+
+    pad = FACTOR - 1
+    kernel_size = 2 * FACTOR - 1
+    acc = tl.zeros((BLOCK_ROWS, BLOCK_OUT), dtype=tl.float32)
+
+    for u in range(0, kernel_size):
+        t = out_cols * FACTOR + u - pad
+        valid = row_mask & out_mask & (t >= 0) & (t < n_time)
+        x = tl.load(x_ptr + rows * n_time + t, mask=valid, other=0.0)
+        x = tl.maximum(x, 0.0)
+        dist = tl.abs(u - pad).to(tl.float32)
+        weight = (FACTOR - dist) / FACTOR
+        acc += x * weight
+
+    denom = tl.sum(acc, axis=1)[:, None]
+    flipped_cols = n_out - 1 - out_cols
+    linear = tl.load(linear_indices_ptr + rows, mask=row_mask, other=0)
+    out = acc / denom
+    tl.store(
+        block_values_ptr + linear * n_out + flipped_cols,
+        out,
+        mask=row_mask & out_mask,
+    )
+
+
+@triton.jit
 def _down_tri_relu_bwd_kernel(
     grad_down_ptr,
     x_ptr,
@@ -216,3 +257,44 @@ class SubResolutionSampler(nn.Module):
         kernel = torch.relu(kernel)
         kernel = self.phi_k(kernel).flip(-1)
         return kernel / kernel.sum(-1, keepdims=True)
+
+    def kernel_postprocess_block_values(
+        self,
+        kernel: torch.Tensor,
+        linear_indices: torch.Tensor,
+        n_block_cells: int,
+    ) -> torch.Tensor:
+        if self.factor > 1 and self.out_mode == "avg" and kernel.is_cuda and kernel.ndim == 2:
+            kernel = kernel.contiguous()
+            n_rows, n_time = kernel.shape
+            n_out = (n_time - 1) // self.factor + 1
+            flat = torch.zeros(
+                (n_block_cells, n_out),
+                dtype=kernel.dtype,
+                device=kernel.device,
+            )
+            block_rows = 16
+            block_out = triton.next_power_of_2(n_out)
+            grid = (triton.cdiv(n_rows, block_rows),)
+            with torch.cuda.device(kernel.device):
+                _down_tri_relu_flip_norm_block_fwd_kernel[grid](
+                    kernel,
+                    linear_indices,
+                    flat,
+                    n_rows,
+                    n_time,
+                    n_out,
+                    FACTOR=self.factor,
+                    BLOCK_ROWS=block_rows,
+                    BLOCK_OUT=block_out,
+                    num_warps=8,
+                )
+            return flat
+
+        vals = self.kernel_postprocess(kernel)
+        flat = torch.zeros(
+            (n_block_cells, vals.shape[-1]),
+            dtype=vals.dtype,
+            device=vals.device,
+        )
+        return flat.index_put((linear_indices,), vals)

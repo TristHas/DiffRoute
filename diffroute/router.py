@@ -75,8 +75,11 @@ class LTIRouter(nn.Module):
         *lead, C, T = runoff.shape
         x = runoff.contiguous().view(-1, C, T)            # merge leading dims -> [B, C, T]
         # Stage 1: Aggregate kernel
-        kernel = self.aggregator(g, params).to(x.device)
-        kernel = kernel.to_block_sparse(self.block_size)
+        if params.requires_grad:
+            kernel = self.aggregator(g, params).to(x.device)
+            kernel = kernel.to_block_sparse(self.block_size)
+        else:
+            kernel = self.aggregator.block_sparse_forward(g, params, self.block_size).to(x.device)
         # Stage 2: Convolution
         y = self.conv(x, kernel)
         # Handle residual if needed
