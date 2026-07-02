@@ -82,12 +82,22 @@
 - Baseline comparison: baseline `T=500` full forward median was `24.058048248291016 ms`, so this is `1.03x` faster and reduces median latency by `2.9%`.
 - Notes: This confirms the synchronization overhead was real but not the dominant forward cost; `irfft` and temporal sampling still dominate uncached aggregation.
 
-## Iteration 9 - Cache static forward routing kernels
+## Iteration 9 - Invalid cached static forward routing kernels
 
 - Target: full forward inference path for fixed graph and detached routing parameters.
 - Hypothesis: RAPID forward benchmarks and inference-style routing reuse the same graph and non-gradient parameter tensor across runoff evaluations. Recomputing aggregation and sparse-to-block conversion every call costs about `19 ms` median at `T=500`; caching the block-sparse routing kernel behind a conservative key should reduce full forward to the sparse convolution cost while leaving parameter-gradient paths unchanged.
 - Change: `LTIRouter` now caches the block-sparse kernel when `params.requires_grad` is false. The cache key includes graph identity, topology buffer pointers and versions, params pointer/version/shape/stride/device, target device, and router aggregation/blockization settings. `params.requires_grad=True` bypasses the cache so differentiable parameter aggregation still builds a fresh autograd graph. Added `clear_kernel_cache()` for explicit invalidation.
 - Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `full_repeat_max_abs=4.3655745685100555e-11`, `conv_forward_max_abs_vs_torch=6.596383173018694e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, and finite parameter gradients.
 - Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 5 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=4.207212829589844`, median `4.197760105133057`, min `4.177120208740234`. Substep timings remained `substep.aggregation.forward median=17.38025665283203`, `substep.blockize.forward median=1.8997440338134766`, and `substep.convolution.forward median=4.172512054443359`.
-- Baseline comparison: original baseline `T=500` full forward median was `24.058048248291016 ms`; cached static forward is `5.73x` faster and reduces median latency by `82.6%`, exceeding the requested half-time reduction. Compared with iteration 8, median full forward improves from `23.363359451293945 ms` to `4.197760105133057 ms`.
-- Notes: This is an inference/static-parameter optimization. Uncached aggregation remains available and is still used for parameter-gradient paths; the remaining cached forward cost is the block-sparse convolution itself.
+- Baseline comparison: this apparent speedup is invalid for the intended model semantics because the routing kernel must be recomputed every forward call.
+- Notes: Reverted in iteration 10; do not use this entry as a valid forward optimization result.
+
+## Iteration 10 - Remove invalid static kernel cache
+
+- Target: `LTIRouter.forward`.
+- Hypothesis: Correct forward semantics require recomputing the routing kernel every call, so the static cache from iteration 9 is not valid even though it improved inference-style timings.
+- Change: Removed `LTIRouter`'s block-sparse kernel cache, cache key, and explicit cache invalidation method. `forward()` again calls `self.aggregator(g, params).to(x.device)` and `to_block_sparse()` every time before convolution.
+- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2` passed with `full_repeat_max_abs=2.9103830456733704e-11`, `conv_forward_max_abs_vs_torch=6.59783836454153e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, and finite parameter gradients.
+- Runtime: `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 5 --warmup 2 --backward-trials 1 --backward-warmup 0` reported `full.forward mean_ms=27.896319961547853`, median `23.327775955200195`, min `23.26211166381836`; `substep.aggregation.forward median=17.40790367126465`, `substep.blockize.forward median=1.901792049407959`, and `substep.convolution.forward median=4.169600009918213`.
+- Baseline comparison: this returns to the iteration 8 behavior, where the valid forward improvement is fixed prefix jump rounds. Compared with the original `T=500` baseline median `24.058048248291016 ms`, the valid current median `23.327775955200195 ms` is `1.03x` faster and reduces latency by `3.0%`.
+- Notes: This keeps the valid prefix-round optimization and removes only the invalid static-kernel caching path.
