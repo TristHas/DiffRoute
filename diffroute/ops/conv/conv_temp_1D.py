@@ -44,7 +44,7 @@ def block_sparse_conv_1d_forward(
         kernel_shape,                       # tuple (C_out, C_in, K)
         BLOCK_SIZE_M: int,
         BLOCK_SIZE_N: int,
-        NZB_BLOCK_SIZE: int = 16
+        NZB_BLOCK_SIZE: int = 1
     ):
     """
     Block-sparse causal 1D convolution:
@@ -282,7 +282,7 @@ def block_sparse_conv_1d_backward(
 class BlockSparseConv1dFn(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x, coo_block_coords, values, kernel_shape,
-                BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16,
+                BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=1,
                 BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None,
                 DX_BLOCK_ORDER=None, DX_BLOCK_COL_OFFSETS=None):
         y = block_sparse_conv_1d_forward(
@@ -321,7 +321,7 @@ class BlockSparseConv1dFn(torch.autograd.Function):
         return dx, None, dvalues, None, None, None, None, None, None, None, None
 
 def block_sparse_conv_1d(x, coo_block_coords, values, kernel_shape,
-                         BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=16,
+                         BLOCK_SIZE_M, BLOCK_SIZE_N, NZB_BLOCK_SIZE=1,
                          BLOCK_SIZE_N_DX=None, BLOCK_SIZE_N_DVALUES=None,
                          DX_BLOCK_ORDER=None, DX_BLOCK_COL_OFFSETS=None):
     return BlockSparseConv1dFn.apply(
