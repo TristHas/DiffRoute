@@ -5,7 +5,7 @@ from .temporal_sampler import SubResolutionSampler
 from ..ops import log_transitive_closure
 from ..ops.transitive_closure import log_transitive_closure_no_grad
 from ..irfs import IRF_FN
-from ..structs import SparseKernel
+from ..structs import BlockSparseKernel, SparseKernel
 
 def aggregate_irf(params, irf_fn,
                   edges, path_cumsum,
@@ -77,4 +77,19 @@ class IRFAggregator(nn.Module):
         irfs_agg = self.sampler.kernel_postprocess(irfs_agg)
 
         kernel_size = (len(g), len(g), irfs_agg.shape[-1])
-        return SparseKernel(coords, irfs_agg, kernel_size)
+        block_metadata = None
+        if self.block_size is not None:
+            cache = getattr(g, "_block_sparse_metadata_cache", None)
+            if cache is None:
+                cache = {}
+                g._block_sparse_metadata_cache = cache
+            key = (self.block_size, tuple(kernel_size), str(coords.device))
+            block_metadata = cache.get(key)
+            if block_metadata is None:
+                block_metadata = BlockSparseKernel.make_block_metadata(
+                    coords,
+                    self.block_size,
+                    kernel_size,
+                )
+                cache[key] = block_metadata
+        return SparseKernel(coords, irfs_agg, kernel_size, block_metadata=block_metadata)

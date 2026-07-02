@@ -3,7 +3,7 @@ import torch.nn as nn
 
 class SparseKernel(nn.Module):
     """COO-formatted sparse kernel used for routing convolutions."""
-    def __init__(self, coords, vals, size):
+    def __init__(self, coords, vals, size, block_metadata=None):
         """Initialize kernel coordinates, values, and target size.
 
         Args:
@@ -15,6 +15,7 @@ class SparseKernel(nn.Module):
         self.register_buffer("coords", coords)  # [n_blocks, 2]
         self.register_buffer("vals", vals)    # [n_blocks, block_size, block_size, ks]
         self.size = size
+        self.block_metadata = block_metadata
 
     def to_block_sparse(self, block_size):
         """Convert the kernel to a block-sparse representation."""
@@ -167,7 +168,26 @@ class BlockSparseKernel(nn.Module):
         return coords.long(), values
         
     @classmethod
-    def from_coo(cls, coords, values, block_size, size=None, flip_values=False):
+    def make_block_metadata(cls, coords, block_size, size):
+        B = block_size
+        block_coords = coords // B
+        block_local_coords = coords % B
+
+        unique_blocks, block_indices = torch.unique(block_coords, dim=0, return_inverse=True)
+        linear_indices = block_indices * (B * B) + block_local_coords[:, 0] * B + block_local_coords[:, 1]
+        unique_blocks = unique_blocks.to(torch.int64)
+        linear_indices = linear_indices.to(torch.long)
+        return {
+            "block_size": block_size,
+            "size": tuple(size),
+            "block_indices": unique_blocks,
+            "linear_indices": linear_indices,
+            "block_col_order": cls._make_col_order(unique_blocks, block_size, size),
+            "block_col_offsets": cls._make_col_offsets(unique_blocks, block_size, size),
+        }
+
+    @classmethod
+    def from_coo(cls, coords, values, block_size, size=None, flip_values=False, block_metadata=None):
         """Construct a block-sparse kernel from COO inputs.
 
         Args:
@@ -183,32 +203,41 @@ class BlockSparseKernel(nn.Module):
         values = values.flip(-1) if flip_values else values
         B = block_size
         ks = values.shape[-1]
-        
-        block_coords = coords // B  
-        block_local_coords = coords % B
-        
-        unique_blocks, block_indices = torch.unique(block_coords, dim=0, return_inverse=True)
+
+        if size is None:
+            max_coords = coords.max(dim=0)[0] + 1
+            size = (max_coords[0].item(), max_coords[1].item(), ks)
+
+        if (
+            block_metadata is None
+            or block_metadata.get("block_size") != block_size
+            or tuple(block_metadata.get("size")) != tuple(size)
+        ):
+            block_metadata = cls.make_block_metadata(coords, block_size, size)
+
+        unique_blocks = block_metadata["block_indices"]
+        linear_indices = block_metadata["linear_indices"]
         n_blocks = unique_blocks.size(0)
-        
-        # Compute linear indices for flattening
-        linear_indices = block_indices * (B * B) + block_local_coords[:,0] * B + block_local_coords[:,1]
         block_values = torch.zeros((n_blocks * B * B, ks), dtype=values.dtype, device=values.device)
         block_values = block_values.index_put((linear_indices,), values)
         block_values = block_values.reshape(n_blocks, B, B, ks)
-        
-        # Compute the overall size of the tensor
-        if size is None:
-            max_coords = coords.max(dim=0)[0] + 1  # Add 1 because indices start from 0
-            size = (max_coords[0].item(), max_coords[1].item(), ks)
 
-        return cls(unique_blocks, block_values, block_size, size)
+        return cls(
+            unique_blocks,
+            block_values,
+            block_size,
+            size,
+            block_col_order=block_metadata["block_col_order"],
+            block_col_offsets=block_metadata["block_col_offsets"],
+        )
 
     @classmethod
     def from_sparse_kernel(cls, kernel, block_size):
         """Create a block-sparse kernel from a `SparseKernel` instance."""
         return cls.from_coo(kernel.coords, kernel.vals, 
                             block_size=block_size, 
-                            size=kernel.size)
+                            size=kernel.size,
+                            block_metadata=getattr(kernel, "block_metadata", None))
     
     @classmethod
     def from_irfs(cls, irfs, block_size):

@@ -38,6 +38,7 @@ class LTIRouter(nn.Module):
         self.aggregator = IRFAggregator(max_delay=max_delay, 
                                         dt=dt, cascade=cascade, 
                                         sampling_mode=sampling_mode,
+                                        block_size=block_size,
                                         block_f=block_f)
         self.conv = BlockSparseCausalConv(conv_imp=conv_imp,
                                           block_n=block_n,
