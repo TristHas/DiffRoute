@@ -1,9 +1,21 @@
 from tqdm.auto import tqdm
 import pandas as pd
 import networkx as nx
+import torch
 
 from .graph_utils import define_schedule
 from .structs import RivTree, RivTreeCluster
+
+
+def save_graph_cache(graph, path):
+    """Dump a built RivTreeCluster's routing tensors so runs skip reclustering."""
+    torch.save(graph._cache_state(), path)
+
+
+def load_graph_cache(path, map_location="cpu"):
+    """Rebuild a route-ready RivTreeCluster from `save_graph_cache` output."""
+    state = torch.load(path, map_location=map_location, weights_only=False)
+    return RivTreeCluster._from_cache(state)
 
 def _read_rapid_graph(vpu_root,
                      rapid_connect="rapid_connect.csv",

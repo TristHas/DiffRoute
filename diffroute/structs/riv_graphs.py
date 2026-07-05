@@ -71,6 +71,25 @@ class RivTree(nn.Module):
     def nodes(self):
         return self.nodes_idx.index.values
 
+    def _cache_state(self):
+        """Minimal routing state (tensors only) for a reclustering-free cache."""
+        return {"edges": self.edges, "path_cumsum": self.path_cumsum,
+                "params": self.params, "nodes": self.nodes,
+                "prefix_jump_rounds": self.prefix_jump_rounds,
+                "include_index_diag": self.include_index_diag, "irf_fn": self.irf_fn}
+
+    @classmethod
+    def _from_cache(cls, s):
+        self = cls.__new__(cls); nn.Module.__init__(self)
+        self.g = None
+        self.irf_fn = s["irf_fn"]
+        self.include_index_diag = s["include_index_diag"]
+        self.prefix_jump_rounds = s["prefix_jump_rounds"]
+        self.nodes_idx = pd.Series(np.arange(len(s["nodes"])), index=s["nodes"])
+        for name in ("edges", "path_cumsum", "params"):
+            self.register_buffer(name, s[name])
+        return self
+
 class RivTreeCluster(nn.Module):
     """Collection of river subgraphs with optional inter-cluster transfers."""
     def __init__(self, clusters_g, node_transfer, 
@@ -140,6 +159,30 @@ class RivTreeCluster(nn.Module):
     @property
     def params(self):
         return torch.cat([g.params for g in self.gs])
+
+    def _cache_state(self):
+        """Tensor-only routing state (no networkx/pandas) for fast reload."""
+        dump = lambda bd: {k: bd[k] for k in bd._name_map}
+        return {"irf_fn": self.irf_fn, "tot_transfer": self.tot_transfer,
+                "clusters": [g._cache_state() for g in self.gs],
+                "src_transfer": dump(self.src_transfer),
+                "dst_transfer": dump(self.dst_transfer)}
+
+    @classmethod
+    def _from_cache(cls, s):
+        self = cls.__new__(cls); nn.Module.__init__(self)
+        self.irf_fn = s["irf_fn"]
+        self.gs = nn.ModuleList([RivTree._from_cache(c) for c in s["clusters"]])
+        all_nodes = np.concatenate([g.nodes for g in self.gs])
+        self.nodes_idx = pd.Series(np.arange(len(all_nodes)), index=all_nodes)
+        lengths = np.array([len(g) for g in self.gs], dtype=np.int64)
+        starts = np.zeros_like(lengths); starts[1:] = np.cumsum(lengths[:-1])
+        self.node_ranges = np.stack([starts, starts + lengths], axis=1)
+        self.node_transfer = None
+        self.tot_transfer = s["tot_transfer"]
+        self.src_transfer = BufferDict(s["src_transfer"])
+        self.dst_transfer = BufferDict(s["dst_transfer"])
+        return self
 
 def init_node_idxs(g):
     """Derive a depth-first traversal ordering for nodes in the graph.
