@@ -178,3 +178,13 @@
 - Runtime: A direct conversion microbenchmark measured iteration 19 `from_coo` at about `1.0403 ms` median and the dense-map metadata variant at about `0.9613 ms` median with identical block indices, block values, column order, and offsets. The standard profile command `python benchmarks/rapid_io_benchmark.py --time-steps 500 --trials 10 --warmup 3 --backward-trials 1 --backward-warmup 0 --conv-impl auto` reported `full.forward median_ms=18.930079460144043`, `substep.blockize.forward median_ms=1.0490719676017761`, and `substep.convolution.forward median_ms=3.5414559841156006`.
 - Baseline comparison: Compared with iteration 19, the standard blockize median improves from `1.0644960403442383 ms` to `1.0490719676017761 ms` (`1.5%`). The microbenchmark shows a clearer `7.6%` isolated conversion reduction, but end-to-end impact is within normal full-forward noise.
 - Notes: This remains a low-level sparse-packing change and keeps the same per-call recomputation semantics.
+
+## Iteration 21 - Skip backward metadata in inference mode
+
+- Target: CUDA dense-key `BlockSparseKernel.from_coo` during no-grad/inference routing.
+- Hypothesis: The full GEOGloWS benchmark routes under `torch.inference_mode()`, so `block_col_order` and `block_col_offsets` are not used. Skipping those backward-only metadata tensors should reduce sparse-packing latency without changing grad-enabled training or correctness paths.
+- Change: The dense-key conversion path now returns empty column metadata when `torch.is_grad_enabled()` is false. Grad-enabled conversion still builds the full column CSR metadata for optimized `dX` backward.
+- Correctness: `python benchmarks/rapid_io_benchmark.py --correctness --correct-time-steps 16 --atol 2e-2 --conv-impl auto` passed with `conv_forward_max_abs_vs_torch=6.605114322155714e-08`, `conv_backward_dx_max_abs_vs_torch=0.0024261474609375`, `conv_backward_dw_max_abs_vs_torch=5.21540641784668e-08`, and finite parameter gradients.
+- Runtime: A no-grad RAPID-305 blockize microbenchmark measured `no_grad_blockize_median_ms=0.666159987449646`, with empty metadata lengths `(0, 0)`. The pre-change no-grad probe was about `0.904992014169693 ms` median, so inference sparse-packing improves by about `1.36x`.
+- Full-GEOGloWS smoke: `cd DiffHydro/examples && PYTHONPATH=... <rivers python> benchmark_full_geoglows_random_runoff.py --vpu-limit 3 --time-steps 256 --warmup-time-steps 0 --trials 1 --skip-random-only --output /tmp/full_geoglows_vpu3_smoke.json` passed, routing `168915` nodes across `45` clusters in `0.8439904659753665 s` after `5.763844107044861 s` setup.
+- Notes: This is an inference-only low-level metadata skip. It does not alter the grad-enabled block-sparse conversion path or cache any per-call routing values.

@@ -253,6 +253,10 @@ class BlockSparseKernel(nn.Module):
         block_values.index_copy_(0, linear_indices.contiguous(), values)
         block_values = block_values.reshape(n_blocks, B, B, ks)
 
+        if not torch.is_grad_enabled():
+            empty = torch.empty((0,), dtype=torch.int32, device=coords.device)
+            return cls(block_indices, block_values, block_size, size, empty, empty)
+
         present_blocks = present.view(n_row_blocks, n_col_blocks)
         col_counts = present_blocks.sum(dim=0, dtype=torch.int32)
         block_col_offsets = torch.empty(
