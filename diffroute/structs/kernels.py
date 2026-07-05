@@ -250,7 +250,7 @@ class BlockSparseKernel(nn.Module):
             dtype=values.dtype,
             device=values.device,
         )
-        block_values = block_values.index_put((linear_indices,), values)
+        block_values.index_copy_(0, linear_indices.contiguous(), values)
         block_values = block_values.reshape(n_blocks, B, B, ks)
 
         return cls(block_indices, block_values, block_size, size)
