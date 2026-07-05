@@ -253,7 +253,33 @@ class BlockSparseKernel(nn.Module):
         block_values.index_copy_(0, linear_indices.contiguous(), values)
         block_values = block_values.reshape(n_blocks, B, B, ks)
 
-        return cls(block_indices, block_values, block_size, size)
+        present_blocks = present.view(n_row_blocks, n_col_blocks)
+        col_counts = present_blocks.sum(dim=0, dtype=torch.int32)
+        block_col_offsets = torch.empty(
+            (n_col_blocks + 1,),
+            dtype=torch.int32,
+            device=coords.device,
+        )
+        block_col_offsets[0] = 0
+        block_col_offsets[1:] = torch.cumsum(col_counts, dim=0)
+
+        col_major_positions = torch.nonzero(
+            present_blocks.t().contiguous().view(-1),
+            as_tuple=False,
+        ).flatten()
+        col_major_rows = col_major_positions % n_row_blocks
+        col_major_cols = col_major_positions // n_row_blocks
+        col_major_keys = col_major_rows * n_col_blocks + col_major_cols
+        block_col_order = key_to_block[col_major_keys].to(torch.int32)
+
+        return cls(
+            block_indices,
+            block_values,
+            block_size,
+            size,
+            block_col_order,
+            block_col_offsets,
+        )
 
     @classmethod
     def from_sparse_kernel(cls, kernel, block_size):
