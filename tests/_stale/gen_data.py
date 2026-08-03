@@ -1,7 +1,9 @@
-from imports import *
+import numpy as np
+import networkx as nx
+import torch
+import torch.nn.functional as F
 from diffroute import get_node_idxs
 from diffroute.agg.kernel_aggregator import RoutingIRFAggregator, get_node_idxs
-from diffroute.utils import annotate_downstream_path_stats
 
 def generate_mini_data(num_timesteps=20):
     """
@@ -39,15 +41,6 @@ def sparse_k_from_g(g, max_delay, block_size, device):
     k = agg(delays)
     return k.to(device)
     
-def generate_inputs(n_trees, max_heights, max_delay, block_size, n_time_steps, batch_size, device="cuda:0"):
-    """
-    """
-    g = generate_river_forest(n_trees, max_heights)
-    annotate_downstream_path_stats(g)
-    k = sparse_k_from_g(g, max_delay, block_size, device)
-    x = torch.relu(torch.randn(batch_size, len(g), n_time_steps, dtype=torch.float32, device=device)).requires_grad_()
-    return g, x, k
-
 ###
 ### More realistic tree forest
 ###
