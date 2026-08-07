@@ -69,13 +69,14 @@ def read_rapid_graph(vpu_root, plength_thr=None, node_thr=None, **rapid_kwargs):
     g, params = _read_rapid_graph(vpu_root, **rapid_kwargs)
     
     if (plength_thr is not None) and (node_thr is not None):
-        clusters_g, node_transfer = define_schedule(g, plength_thr=plength_thr, 
-                                                    node_thr=node_thr)
-        g = RivTreeCluster(clusters_g, 
+        clusters_g, node_transfer, transition_nodes = define_schedule(
+            g, plength_thr=plength_thr, node_thr=node_thr)
+        g = RivTreeCluster(clusters_g,
                            node_transfer,
-                           irf_fn="muskingum", 
+                           irf_fn="muskingum",
                            route_src_reach=True,
-                           param_df=params)
+                           param_df=params,
+                           transition_nodes=transition_nodes)
     else:
         g = RivTree(g, irf_fn="muskingum", 
                     route_src_reach=True,
@@ -99,13 +100,14 @@ def read_multiple_rapid_graphs(vpu_roots, plength_thr=None, node_thr=None, **rap
     g, params = _read_multiple_rapid_graphs(vpu_roots, **rapid_kwargs)
     
     if (plength_thr is not None) and (node_thr is not None):
-        clusters_g, node_transfer = define_schedule(g, plength_thr=plength_thr, 
-                                                    node_thr=node_thr)
-        g = RivTreeCluster(clusters_g, 
+        clusters_g, node_transfer, transition_nodes = define_schedule(
+            g, plength_thr=plength_thr, node_thr=node_thr)
+        g = RivTreeCluster(clusters_g,
                            node_transfer,
-                           irf_fn="muskingum", 
+                           irf_fn="muskingum",
                            route_src_reach=True,
-                           param_df=params)
+                           param_df=params,
+                           transition_nodes=transition_nodes)
     else:
         g = RivTree(g, irf_fn="muskingum", 
                     route_src_reach=True,

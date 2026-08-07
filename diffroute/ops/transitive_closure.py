@@ -43,29 +43,36 @@ def downstream_prefixes(irf, edges, block_f=128):
         * (edges >= 0).unsqueeze(-1).to(P.dtype)
     return P, Q
 
-def transitive_closure(irf, edges, path_cumsum,
-                          route_src_reach=True, block_f=128):
-    """Path sums over the downstream closure; see ``ops/closure_sub.py``.
+def select_head(P, Q, own_reach):
+    """Which prefix each source end reads from.
 
-    ``route_src_reach`` decides whether the source reach's own IRF is part of the
-    path: it is when the runoff enters at the head of that reach, it is not when
-    the runoff is already at its outlet. That choice is exactly the choice of
-    which prefix the source end reads from.
+    ``own_reach[s]`` decides whether the source reach's own IRF is part of the
+    paths leaving ``s``: it is when the runoff enters at the head of that reach,
+    it is not when the runoff is already at its outlet. That choice is exactly
+    the choice of prefix, so a mixed graph is a ``where`` and costs nothing
+    structural. The uniform cases skip the select and alias P or Q directly.
     """
+    if bool(own_reach.all()):
+        return P
+    if not bool(own_reach.any()):
+        return Q
+    return torch.where(own_reach.unsqueeze(-1), P, Q)
+
+
+def transitive_closure(irf, edges, path_cumsum, own_reach, block_f=128):
+    """Path sums over the downstream closure; see ``ops/closure_sub.py``."""
     P, Q       = downstream_prefixes(irf, edges, block_f)
-    coords, v  = closure_sub(P if route_src_reach else Q, Q,
-                             edges, path_cumsum,
-                             route_src_reach, block_f)
+    coords, v  = closure_sub(select_head(P, Q, own_reach), Q,
+                             edges, path_cumsum, own_reach, block_f)
     return coords, v, P
 
 def log_transitive_closure(irfs_freq, edges, path_cumsum,
-                           *, route_src_reach=True, block_f=128):
+                           *, own_reach, block_f=128):
     """
-        
+
     """
     log_irfs_freq = stable_log_flattened(irfs_freq)
     coords, log_irfs_freq_agg, log_irfs_freq_prefix = transitive_closure(
-        log_irfs_freq, edges, path_cumsum,
-        route_src_reach=route_src_reach, block_f=block_f)
+        log_irfs_freq, edges, path_cumsum, own_reach, block_f=block_f)
     irfs_freq_agg = exp_complex(log_irfs_freq_agg)
     return coords, irfs_freq_agg

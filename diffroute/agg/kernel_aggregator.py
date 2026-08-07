@@ -10,18 +10,20 @@ def aggregate_irf(params, irf_fn,
                   edges, path_cumsum,
                   dt, time_window,
                   cascade=1,
-                  route_src_reach=True,
+                  own_reach=None,
                   block_f=128):
     """
     """
-    irfs = irf_fn(params, time_window=time_window, dt=dt).squeeze()
+    # reshape, not squeeze: a one-reach cluster has n == 1, and a bare squeeze()
+    # would drop the node dimension along with any other length-1 axis
+    irfs = irf_fn(params, time_window=time_window, dt=dt).reshape(params.shape[0], -1)
     time_window_expanded = irfs.shape[-1]
     assert time_window_expanded == time_window * int( 1 / dt )
 
     irfs_freq = torch.fft.rfft(irfs, n=time_window_expanded, dim=-1)
     coords, irfs_freq_agg = log_transitive_closure(
         irfs_freq, edges, path_cumsum,
-        route_src_reach=route_src_reach,
+        own_reach=own_reach,
         block_f=block_f
     )
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
@@ -62,7 +64,7 @@ class IRFAggregator(nn.Module):
                                           dt=self.dt,
                                           time_window=self.max_delay,
                                           cascade=self.cascade,
-                                          route_src_reach=g.route_src_reach,
+                                          own_reach=g.own_reach,
                                           block_f=self.block_f)
 
         irfs_agg = torch.relu(irfs_agg)

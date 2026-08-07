@@ -4,16 +4,17 @@ Convention
 ----------
 For a river DAG with ``edges[i] = succ(i)`` (-1 at outlets), the routing kernel
 entry ``K(d, s)`` is the convolution of the reach IRFs along the path ``s -> d``.
-Which endpoint reaches are traversed is set by ``route_src_reach``, the low-level form
-of ``RivTree(route_src_reach=...)``, i.e. by where the runoff input enters:
+Which endpoint reaches are traversed is set per node by ``own_reach``, the low-level
+form of ``RivTree(route_src_reach=...)``. A clustered graph mixes the two within one
+subgraph, which is why this is a mask and not a flag:
 
-``route_src_reach=True``  (``route_src_reach=True``)
+``own_reach[s] = True``   (``route_src_reach=True``, the default)
     runoff enters at the HEAD of its own reach, so it traverses that reach::
 
         K(d, s) = conv of irf over  s..d   (both ends included)
         K(s, s) = irf(s)                   (the diagonal is emitted)
 
-``route_src_reach=False``
+``own_reach[s] = False``  (``route_src_reach=False``)
     runoff is already at the OUTLET of its own reach (this is what a
     catchment-outlet runoff model produces), so its own reach is NOT traversed::
 
@@ -29,15 +30,14 @@ In log space a path sum is a difference of downstream prefixes. With
 both cases are the *same* expression, differing only in which prefix the source
 end reads from::
 
-    val(d, s) = head[s] - Q[d],      head = P if route_src_reach else Q
+    val(d, s) = head[s] - Q[d],      head[s] = P[s] if own_reach[s] else Q[s]
 
 That is why this module takes two prefix tensors and needs no edge lookup at the
 destination: ``Q[d]`` already is "everything strictly downstream of d".
 
-History: before the v1 line the source end always read ``P[s]``, so
-``route_src_reach=False`` dropped the diagonal but still convolved every path with the
-source reach's own IRF -- identical off-diagonal kernels to ``route_src_reach=True``.
-See ``tests/test_semantics.py``.
+History: before the v1 line the source end always read ``P[s]``, so outlet entry
+dropped the diagonal but still convolved every path with the source reach's own IRF
+-- identical off-diagonal kernels to head entry. See ``tests/test_semantics.py``.
 """
 import math, torch, triton, triton.language as tl
 from torch.autograd import Function
@@ -45,18 +45,19 @@ from torch.autograd import Function
 @triton.jit
 def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
                          head_ptr, tail_ptr,
-                         edges_ptr, cumsum_ptr,
+                         edges_ptr, cumsum_ptr, own_ptr,
                          n_nodes,
                          n_feat: tl.constexpr,
-                         ROUTE_SRC_REACH: tl.constexpr,
                          BLOCK_F: tl.constexpr):
     pid  = tl.program_id(0)  # start node
     if pid >= n_nodes: return
     # global write offset for this start node
     base = tl.load(cumsum_ptr + (pid - 1), mask=(pid > 0), other=0)
     # first destination: the node itself when its own reach is traversed,
-    # otherwise the next reach downstream
-    dest = tl.where(ROUTE_SRC_REACH, pid, tl.load(edges_ptr + pid))
+    # otherwise the next reach downstream. Per-node, because a clustered graph
+    # mixes conventions (see structs/utils.resolve_self_flags).
+    own  = tl.load(own_ptr + pid)
+    dest = tl.where(own != 0, pid, tl.load(edges_ptr + pid))
     step = 0
     offs = tl.arange(0, BLOCK_F)
 
@@ -67,7 +68,7 @@ def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
         tl.store(coords_ptr + row*2 + 1, pid)
 
         # path-sum via prefix difference: head[pid] already excludes the source
-        # reach when ROUTE_SRC_REACH is false, tail[dest] always excludes dest.
+        # reach under outlet entry, tail[dest] always excludes dest.
         for b in range(0, n_feat, BLOCK_F):
             m   = offs + b < n_feat
             p_s = tl.load(head_ptr + pid  * n_feat + b + offs, mask=m, other=0.)
@@ -103,7 +104,7 @@ def _closure_enum_fwd(head: torch.Tensor,
                       tail: torch.Tensor,
                       edges: torch.Tensor,
                       path_cumsum: torch.Tensor,
-                      route_src_reach: bool = True,
+                      own_reach: torch.Tensor,
                       block_f: int = 128):
     """
     Triton forward: enumerate (dest,start) pairs & prefix differences.
@@ -112,6 +113,7 @@ def _closure_enum_fwd(head: torch.Tensor,
     tail        = tail.contiguous()
     edges       = edges.contiguous()
     path_cumsum = path_cumsum.contiguous()  # safe cast .to(torch.int32)
+    own_reach   = own_reach.to(torch.int8).contiguous()
 
     n, f   = head.shape
     N_path = int(path_cumsum[-1].item())
@@ -120,9 +122,8 @@ def _closure_enum_fwd(head: torch.Tensor,
 
     with torch.cuda.device(head.device):
         _coo_enum_sum_kernel[(n,)](coords, vals,
-                                   head, tail, edges, path_cumsum,
+                                   head, tail, edges, path_cumsum, own_reach,
                                    n, f,
-                                   ROUTE_SRC_REACH=route_src_reach,
                                    BLOCK_F=block_f)
     return coords, vals
 
@@ -135,9 +136,9 @@ def _closure_enum_bwd(g_vals: torch.Tensor,
     """
     Triton backward: accumulate dL/dvals -> (dL/dhead, dL/dtail).
 
-    ``head`` and ``tail`` may be the same tensor (they are when
-    ``route_src_reach=False``); autograd then sums the two returned buffers, which
-    is exactly the gradient that tensor should receive.
+    ``head`` and ``tail`` may be the same tensor (they are when every node uses
+    outlet entry); autograd then sums the two returned buffers, which is exactly
+    the gradient that tensor should receive.
     """
     g_vals = g_vals.contiguous()
     coords = coords.contiguous()
@@ -157,10 +158,10 @@ def _closure_enum_bwd(g_vals: torch.Tensor,
 # ------------------------------------------------------------------
 class ClosureSub(Function):
     @staticmethod
-    def forward(ctx, head, tail, edges, path_cumsum,
-                route_src_reach: bool = True, block_f: int = 128):
+    def forward(ctx, head, tail, edges, path_cumsum, own_reach,
+                block_f: int = 128):
         coords, vals = _closure_enum_fwd(head, tail, edges, path_cumsum,
-                                         route_src_reach, block_f)
+                                         own_reach, block_f)
         ctx.save_for_backward(coords)
         ctx.block_f  = block_f
         ctx.n_nodes  = head.shape[0]
@@ -177,17 +178,16 @@ class ClosureSub(Function):
         return g_head, g_tail, None, None, None, None
 
 
-def closure_sub(head, tail, edges, path_cumsum,
-                route_src_reach: bool = True, block_f: int = 128):
+def closure_sub(head, tail, edges, path_cumsum, own_reach, block_f: int = 128):
     """Path sums ``val(d, s) = head[s] - tail[d]`` over the downstream closure.
 
     Args:
         head: prefix the SOURCE end reads from -- the inclusive prefix ``P`` when
-            ``route_src_reach`` is true, the exclusive prefix ``Q`` otherwise.
+            ``own_reach[s]`` is true, the exclusive prefix ``Q`` otherwise.
         tail: prefix the DESTINATION end reads from -- always the exclusive
             prefix ``Q`` (see the module docstring).
         edges: ``edges[i] = succ(i)``, -1 at outlets.
         path_cumsum: per-node write offsets from ``downstream_path_stats``.
-        route_src_reach: whether the diagonal ``(s, s)`` is emitted.
+        own_reach: per-node bool; whether the diagonal ``(s, s)`` is emitted.
     """
-    return ClosureSub.apply(head, tail, edges, path_cumsum, route_src_reach, block_f)
+    return ClosureSub.apply(head, tail, edges, path_cumsum, own_reach, block_f)

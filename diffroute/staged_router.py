@@ -117,6 +117,7 @@ class LTIStagedRouter(nn.Module):
             torch.Tensor: Routed discharge tensor shaped `[B, N_nodes, T]`.
         """
         if params is None: params = gs.params
+        x = self._to_internal(x, gs)
         transfer_bucket = self._init_transfer_bucket(x, gs)
         out = torch.empty(x.shape[0], len(gs.nodes_idx), x.shape[-1],
                           device=x.device, dtype=x.dtype)
@@ -124,14 +125,36 @@ class LTIStagedRouter(nn.Module):
         start = 0
         for cid in range(len(gs)):
             s, e = gs.node_ranges[cid]
-            y_c, transfer_bucket = self.route_one_cluster(x[:,s:e], gs, cid, 
+            y_c, transfer_bucket = self.route_one_cluster(x[:,s:e], gs, cid,
                                                           params[s:e],
                                                           transfer_bucket)
             end = start + y_c.shape[1]
             out = write_slice(out, y_c, start, end)
             start = end
 
-        return out 
+        return self._to_user(out, gs)
+
+    @staticmethod
+    def _to_internal(x: torch.Tensor, gs) -> torch.Tensor:
+        """Scatter one row per real node into the internal layout.
+
+        The internal layout carries an extra row per transition node -- the copy
+        of an upstream breakpoint node that receives a transfer. Those rows must
+        start at zero: their content arrives through `_apply_incoming`, and any
+        local runoff there would double-count what the source cluster already
+        routed.
+        """
+        if not gs.has_transitions:
+            return x
+        full = x.new_zeros(x.shape[0], len(gs.nodes_idx), x.shape[-1])
+        return full.index_copy(1, gs.keep_pos, x)
+
+    @staticmethod
+    def _to_user(out: torch.Tensor, gs) -> torch.Tensor:
+        """Drop transition rows, leaving one row per real node."""
+        if not gs.has_transitions:
+            return out
+        return out.index_select(1, gs.keep_pos)
 
     def route_all_clusters_yield(self, xs: List[torch.Tensor], gs, 
                                  params: List[Any] | None = None):

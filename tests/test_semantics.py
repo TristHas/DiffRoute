@@ -3,7 +3,7 @@
 Convention under test.  For ``edges[i] = succ(i)`` (-1 at outlets), the routing
 kernel entry ``K(d, s)`` is the convolution of the reach IRFs along ``s -> d``:
 
-  route_src_reach=True     runoff enters at the HEAD of its own reach
+  route_src_reach=True    runoff enters at the HEAD of its own reach
                             K(d, s) = conv of irf over  s..d   (both ends in)
                             K(s, s) = irf(s)
 
@@ -188,11 +188,8 @@ def test_enumeration(route_src):
     g = random_tree()
     delays = {i: 1 + (i % 3) for i in range(g.number_of_nodes())}
     rt, pos, _ = _tree(g, delays, route_src)
-    counts, _ = downstream_path_stats(g, route_src)
-    nidx = init_node_idxs(g)
+    counts = downstream_path_stats(g, route_src)
     assert int(rt.path_cumsum[-1]) == sum(counts.values())
-    diag_pairs = sum(1 for n in g.nodes
-                     if counts[n] and False)          # placeholder, see below
     # rebuild the (dest, src) set the aggregator will emit
     e = rt.edges.tolist()
     pairs = set()

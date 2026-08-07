@@ -52,6 +52,45 @@ One name, one meaning, all the way down: `init_pre_indices`,
 `downstream_path_stats`, `closure_sub`, `transitive_closure` and `aggregate_irf`
 all take `route_src_reach` rather than a differently-named internal flag.
 
+### Fixed — clustered graphs now route identically to the unsplit graph
+
+Splitting a network into clusters is a scheduling device, so it must not change
+any output value. That only held with `route_src_reach=True`. The transfer hands
+an upstream cluster's *routed discharge* to the downstream cluster as if it were
+runoff, which reconstructs the unsplit network only if the receiving row still
+traverses exactly one reach — true when the source reach is routed, false when
+it is not, since then a node's input is already past its own reach.
+
+Resolved by handing the value to a **copy of the upstream breakpoint node**
+placed in the downstream cluster, rather than to the downstream node itself.
+Delivering it straight to `v` cannot work in general, because `v`'s input would
+then be a mixture: local runoff that must not traverse `irf_v`, and transferred
+discharge that must. The copy separates them.
+
+`route_src_reach` is therefore resolved **per node**:
+
+- `RivTree(..., transition_nodes=...)` marks copies. They are always False
+  whatever the global setting, and emit no output of their own.
+- `own_reach` is a per-node buffer; the closure kernel reads it instead of a
+  compile-time flag, and `select_head` becomes `where(own_reach, P, Q)` — the
+  uniform cases still alias `P` or `Q` with no extra allocation.
+- `route_src_reach` also accepts a `{node: bool}` mapping.
+- `RivTreeCluster.nodes` is the duplicate-free layout the router takes in and
+  hands back; `internal_nodes` exposes the layout with copies.
+- `define_schedule` returns `(clusters, node_transfer, transition_nodes)` and now
+  segments with `add_edge=True`.
+
+`tests/test_clusters.py` asserts clustered == unsplit, node for node, both ways.
+
+Three robustness bugs surfaced by single-reach clusters, all fixed:
+
+- `init_pre_indices` raised on an edge-less graph (`zip(*g.edges)`).
+- `aggregate_irf` called a bare `.squeeze()` on the IRF table, which dropped the
+  node dimension when `n == 1`. It now reshapes to `[n, -1]`.
+- `LTIRouter` built a kernel even when no path carries anything (a single reach
+  with `route_src_reach=False`), which crashed the conv. It now returns the
+  residual alone.
+
 ### Changed — closure internals
 
 - `closure_sub(head, tail, edges, path_cumsum, ...)` now takes two prefix

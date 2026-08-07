@@ -10,13 +10,36 @@ from tqdm.auto import tqdm
 from ..irfs import IRF_PARAMS
 from .utils import init_pre_indices
 
+def check_route_src_reach(route_src_reach):
+    """Validate a uniform ``route_src_reach`` or a per-node mapping of them."""
+    if hasattr(route_src_reach, "items"):
+        return {k: bool(v) for k, v in route_src_reach.items()}
+    return bool(route_src_reach)
+
+
+def _src_reach_flags(route_src_reach, nodes, transition_nodes):
+    """Per-node "is this node's own reach on the paths leaving it" flags.
+
+    Transition nodes are forced to False whatever the global setting: the value
+    handed to them is an upstream cluster's routed discharge, which is by
+    construction already at that reach's outlet.
+    """
+    transition = set(transition_nodes or ())
+    if isinstance(route_src_reach, bool):
+        base = {n: route_src_reach for n in nodes}
+    else:
+        base = {n: bool(route_src_reach.get(n, True)) for n in nodes}
+    return {n: base[n] and (n not in transition) for n in nodes}
+
+
 class RivTree(nn.Module):
     """River network wrapper that stores IRF parameters per node."""
     def __init__(self, g, irf_fn,
                  route_src_reach=True,
                  param_df=None,
                  param_names=None,
-                 nodes_idx=None):
+                 nodes_idx=None,
+                 transition_nodes=None):
         """Initialize river network metadata and parameter buffers.
 
         Args:
@@ -34,21 +57,46 @@ class RivTree(nn.Module):
                     ``y = x + Kx``.
                 Note the consequence for headwaters: with False their own reach
                 parameters are never used and carry no gradient.
+                A ``{node: bool}`` mapping sets it per node.
             param_df (pd.DataFrame | None): Optional parameter table.
             param_name (Iterable | None): Optional parameter names.
             nodes_idx (pd.Series | None): Precomputed node ordering.
+            transition_nodes (Iterable | None): Nodes that carry an upstream
+                cluster's routed discharge rather than local runoff. They are
+                forced to outlet entry, and they emit no output of their own --
+                the cluster they came from already reported it.
         """
         super().__init__()
         self.g = g
         self.nodes_idx = nodes_idx if nodes_idx is not None else init_node_idxs(g)
-        self.route_src_reach = bool(route_src_reach)
+        self.route_src_reach = check_route_src_reach(route_src_reach)
+        self.transition_nodes = set(transition_nodes or ())
         self.irf_fn = irf_fn
 
-        edges, path_cumsum, _ = init_pre_indices(g, self.nodes_idx,
-                                                 route_src_reach=self.route_src_reach)
+        labels = list(self.nodes_idx.index)
+        flags = _src_reach_flags(self.route_src_reach, labels, self.transition_nodes)
+        edges, path_cumsum, own_reach = init_pre_indices(g, self.nodes_idx,
+                                                         route_src_reach=flags)
+
+        # Diagonal weight for the residual in LTIRouter: a node contributes its
+        # own input to its own output exactly when its reach is not traversed
+        # (route_src_reach False) AND it is a real node, not a transition copy.
+        emit = (~own_reach).float()
+        if self.transition_nodes:
+            trans = torch.tensor([n in self.transition_nodes for n in labels])
+            emit = emit.masked_fill(trans, 0.0)
+            self.register_buffer("transition", trans)
+        else:
+            self.register_buffer("transition", torch.zeros(len(labels), dtype=torch.bool))
+        self.n_paths = int(path_cumsum[-1]) if len(path_cumsum) else 0
+        self.uniform_src_reach = (True if bool(own_reach.all()) else
+                                  False if not bool(own_reach.any()) else None)
+        self.has_residual = bool((emit != 0).any())
 
         self.register_buffer("edges", edges)
         self.register_buffer("path_cumsum", path_cumsum)
+        self.register_buffer("own_reach", own_reach)
+        self.register_buffer("residual_weight", emit.view(-1, 1))
         if irf_fn is not None:
             self.init_params(param_df, param_names)
 
@@ -70,6 +118,16 @@ class RivTree(nn.Module):
         return len(self.nodes_idx)
 
     @property
+    def uniform(self) -> bool:
+        """Whether every node shares the same ``route_src_reach``.
+
+        The per-node form is the ``own_reach`` buffer, which is what the kernels
+        consume: it is exactly "is the diagonal ``K(s, s)`` part of the sparse
+        kernel".
+        """
+        return self.uniform_src_reach is not None
+
+    @property
     def nodes(self):
         return self.nodes_idx.index.values
 
@@ -80,7 +138,8 @@ class RivTreeCluster(nn.Module):
                  route_src_reach=True,
                  param_df=None,
                  param_names=None,
-                 nodes_idx=None):
+                 nodes_idx=None,
+                 transition_nodes=None):
         """Assemble clustered river networks and transfer bookkeeping.
 
         Args:
@@ -88,28 +147,42 @@ class RivTreeCluster(nn.Module):
             node_transfer (Dict[int, List[Tuple[int, int, int]]] | None):
                 Mapping describing inter-cluster transfers.
             irf_fn (str): Name of the IRF parameterization to use.
-            route_src_reach (bool): See ``RivTree``. Note that
-                ``node_transfer`` injects an upstream
-                cluster's routed discharge as *runoff* at the receiving node, which
-                only reconstructs the unsplit network when that runoff traverses
-                the receiving reach -- i.e. only for ``route_src_reach=True``.
+            route_src_reach (bool): See ``RivTree``. Applies to every real node;
+                transition nodes are always False whatever this says, which is
+                what lets a split network reproduce the unsplit one either way.
             param_df (pd.DataFrame | None): Optional parameter table.
             nodes_idx (Sequence[pd.Series] | None): Custom node orderings.
+            transition_nodes (Dict[int, Iterable] | None): Per cluster, the copies
+                of upstream breakpoint nodes that receive a transfer instead of
+                local runoff (from ``define_schedule``). They are excluded from
+                the user-facing node layout -- the cluster they were copied from
+                already reports them.
         """
         super().__init__()
         if nodes_idx is None: nodes_idx = [None]*len(clusters_g)
+        transition_nodes = transition_nodes or {}
         self.irf_fn = irf_fn
-        self.route_src_reach = bool(route_src_reach)
+        self.route_src_reach = check_route_src_reach(route_src_reach)
         self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
                                          route_src_reach=self.route_src_reach,
                                          param_df=param_df,
                                          param_names=param_names,
-                                         nodes_idx=nodes_idx[i]) \
+                                         nodes_idx=nodes_idx[i],
+                                         transition_nodes=transition_nodes.get(i)) \
                                  for i,g in enumerate(tqdm(clusters_g))])
         self.node_transfer = node_transfer
         all_nodes = np.concatenate([g.nodes_idx.index.values for g in self.gs])
         self.nodes_idx = pd.Series(np.arange(len(all_nodes)),
                                    index=all_nodes)
+
+        # Duplicate-free view. `nodes_idx` spans the internal layout, transition
+        # copies included; `keep_pos` selects one row per real node, which is what
+        # the router takes in and hands back.
+        keep = torch.cat([g.transition for g in self.gs]).logical_not()
+        self.register_buffer("keep_pos", torch.nonzero(keep, as_tuple=False).flatten())
+        self.out_nodes_idx = pd.Series(np.arange(int(keep.sum())),
+                                       index=all_nodes[keep.numpy()])
+        self.has_transitions = bool((~keep).any())
 
         # Init coordinate indexors
         lengths = np.array([len(g) for g in self.gs], dtype=np.int64)
@@ -142,6 +215,12 @@ class RivTreeCluster(nn.Module):
 
     @property
     def nodes(self):
+        """Real nodes, one entry each, in router input/output order."""
+        return self.out_nodes_idx.index.values
+
+    @property
+    def internal_nodes(self):
+        """Every row of the internal layout, transition copies included."""
         return self.nodes_idx.index.values
 
     @property

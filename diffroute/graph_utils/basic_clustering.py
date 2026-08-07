@@ -159,6 +159,7 @@ def group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, edges, s
 
     print("Match breakpoint nodes across clusters...")
     node_transfer = defaultdict(list)
+    transition_nodes = defaultdict(set)
 
     for (start, end), (u, v) in zip(dependencies, edges):
         # Use cluster_map to get the cluster indices.
@@ -166,19 +167,29 @@ def group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, edges, s
             continue
         start_cluster_idx = cluster_map[start]
         end_cluster_idx = cluster_map[end]
+        if start_cluster_idx == end_cluster_idx:
+            # both sides landed in the same merged cluster, so compose_all already
+            # restored the u -> v edge: nothing to transfer, u is a normal node
+            continue
         start_edge_idx = node_idxs[start_cluster_idx].loc[u]
-        end_edge_index = node_idxs[end_cluster_idx].loc[v]  # Adjust u or v per your scheme
+        # The receiving end is the COPY of u that `add_edge` put in u's downstream
+        # cluster, not v. Handing u's routed discharge to u's copy -- which carries
+        # outlet entry -- reproduces the unsplit network for either global mode; a
+        # value delivered straight to v could not, because v's own reach would have
+        # to be traversed by the transfer and skipped by v's local runoff.
+        end_edge_index = node_idxs[end_cluster_idx].loc[u]
         node_transfer[start_cluster_idx].append((end_cluster_idx, start_edge_idx, end_edge_index))
-    
-    return clusters_g, node_transfer
+        transition_nodes[end_cluster_idx].add(u)
+
+    return clusters_g, node_transfer, dict(transition_nodes)
 
 def define_schedule(G, plength_thr=10**5, node_thr=10**4, runoff_to_output=False):
     print("#### Upstream stats computations ... ####")
     upstream_path_stats_w_breakpoints(G, plength_thr)
     print("#### Segmentation into subgraphs ... ####")
-    cluster_subgraphs, dependencies, edges = segment_graph_by_breakpoints(G)
+    cluster_subgraphs, dependencies, edges = segment_graph_by_breakpoints(G, add_edge=True)
     subgraph_weights = pd.Series({k: len(v)for k, v in cluster_subgraphs.items()})
     print("#### Grouping subgraphs to cluster and infering dependencies ... ####")
-    clusters_g, node_transfer = group_subraphs_to_cluster_sequence(cluster_subgraphs, dependencies, 
-                                                                   edges, subgraph_weights, thr=node_thr)
-    return clusters_g, node_transfer
+    clusters_g, node_transfer, transition_nodes = group_subraphs_to_cluster_sequence(
+        cluster_subgraphs, dependencies, edges, subgraph_weights, thr=node_thr)
+    return clusters_g, node_transfer, transition_nodes

@@ -64,13 +64,21 @@ class LTIRouter(nn.Module):
                              f"leading batch dimension, got {runoff.shape}")
         *lead, C, T = runoff.shape
         x = runoff.contiguous().view(-1, C, T)            # merge leading dims -> [B, C, T]
-        # Stage 1: Aggregate kernel
-        kernel = self.aggregator(g, params).to(x.device)
-        kernel = kernel.to_block_sparse(self.block_size)
-        # Stage 2: Convolution
-        y = self.conv(x, kernel)
-        # With route_src_reach=False the runoff is already at the reach outlet, so
-        # the kernel holds only strictly-downstream paths and the diagonal is the
-        # identity -- added here rather than carried in the sparse kernel.
-        if not g.route_src_reach: y = x + y
+        if g.n_paths:
+            # Stage 1: Aggregate kernel
+            kernel = self.aggregator(g, params).to(x.device)
+            kernel = kernel.to_block_sparse(self.block_size)
+            # Stage 2: Convolution
+            y = self.conv(x, kernel)
+        else:
+            # No path carries anything: a single-reach cluster under outlet entry
+            # emits its input unchanged, and there is no kernel to build.
+            y = torch.zeros_like(x)
+        # With route_src_reach=False the runoff is already at the reach outlet, so the
+        # kernel holds only strictly-downstream paths and the diagonal is the
+        # identity -- added here rather than carried in the sparse kernel. The
+        # weight is per node: it is 0 where the reach IS traversed (head entry,
+        # diagonal already in the kernel) and 0 at transition nodes, whose value
+        # was already reported by the cluster they came from.
+        if g.has_residual: y = y + x * g.residual_weight
         return y.reshape(*lead, C, T)                     # restore leading dims
