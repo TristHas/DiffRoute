@@ -207,6 +207,8 @@ def _closure_sub_backward(route_src):
     edges = edges.to(DEVICE)
     path_cumsum = path_cumsum.to(DEVICE)
     own = own.to(DEVICE)
+    # full output: every node keeps its own row
+    out_row = torch.arange(len(nidx), dtype=torch.int32, device=DEVICE)
     n, f = len(nidx), 64
 
     head_raw = torch.randn(n, f, device=DEVICE)
@@ -214,7 +216,7 @@ def _closure_sub_backward(route_src):
 
     head_t = head_raw.clone().requires_grad_(True)
     tail_t = tail_raw.clone().requires_grad_(True)
-    _, vals_t = closure_sub(head_t, tail_t, edges, path_cumsum, own)
+    _, vals_t = closure_sub(head_t, tail_t, edges, path_cumsum, own, out_row)
     target = torch.rand_like(vals_t)
     F.mse_loss(vals_t, target).backward()
 
@@ -241,12 +243,14 @@ def test_closure_sub_backward_shared_prefix():
     edges = edges.to(DEVICE)
     path_cumsum = path_cumsum.to(DEVICE)
     own = own.to(DEVICE)
+    # full output: every node keeps its own row
+    out_row = torch.arange(len(nidx), dtype=torch.int32, device=DEVICE)
     n, f = len(nidx), 64
 
     raw = torch.randn(n, f, device=DEVICE)
 
     p_t = raw.clone().requires_grad_(True)
-    _, vals_t = closure_sub(p_t, p_t, edges, path_cumsum, own)
+    _, vals_t = closure_sub(p_t, p_t, edges, path_cumsum, own, out_row)
     target = torch.rand_like(vals_t)
     F.mse_loss(vals_t, target).backward()
 
@@ -281,13 +285,15 @@ def _aggregate_irf_backward(route_src):
     edges = edges.to(DEVICE)
     path_cumsum = path_cumsum.to(DEVICE)
     own = own.to(DEVICE)
+    # full output: every node keeps its own row
+    out_row = torch.arange(len(nidx), dtype=torch.int32, device=DEVICE)
     dt, tw = 1.0, 30
     params_raw, _ = _hayami_params(g, DEVICE)
 
     params_t = params_raw.clone().requires_grad_(True)
     _, irfs_t = aggregate_irf(params_t, HAYAMI, edges, path_cumsum,
                               dt=dt, time_window=tw,
-                              own_reach=own)
+                              own_reach=own, out_row=out_row)
     target = torch.rand_like(irfs_t)
     F.mse_loss(irfs_t, target).backward()
     grad_opt = params_t.grad.clone()

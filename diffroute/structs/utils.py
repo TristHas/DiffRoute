@@ -70,22 +70,29 @@ def init_pre_indices(g: nx.DiGraph,
     return edges, path_cumsum, own_reach
 
 
-def downstream_path_stats(g, route_src_reach):
+def downstream_path_stats(g, route_src_reach, keep=None):
     """Number of (dest) rows emitted per source node.
 
-    ``count[u] = route_src_reach[u] + (number of nodes strictly downstream of u)``.
-    Splitting it that way is what lets ``route_src_reach`` vary per node: the
-    descendant count does not depend on the flags at all.
+        count[u] = (route_src_reach[u] and keep[u])     # the diagonal, if wanted
+                 + number of KEPT nodes strictly downstream of u
+
+    Splitting it that way is what lets both flags vary per node: the descendant
+    count depends only on ``keep``, never on ``route_src_reach``.
 
     Parameters
     ----------
     route_src_reach : bool | Mapping[node, bool]
+    keep : Mapping[node, bool] | None
+        Which nodes are wanted as destinations. ``None`` keeps all of them.
     """
     if isinstance(route_src_reach, (bool, np.bool_)):
         route_src_reach = {node: bool(route_src_reach) for node in g.nodes()}
+    if keep is None:
+        keep = {node: True for node in g.nodes()}
 
-    n_desc = {node: 0 for node in g.nodes()}
+    n_kept_desc = {node: 0 for node in g.nodes()}
     for u in reversed(list(nx.topological_sort(g))):
-        n_desc[u] = sum(1 + n_desc[v] for v in g.successors(u))
+        n_kept_desc[u] = sum(int(bool(keep[v])) + n_kept_desc[v] for v in g.successors(u))
 
-    return {u: int(bool(route_src_reach[u])) + n_desc[u] for u in g.nodes()}
+    return {u: int(bool(route_src_reach[u]) and bool(keep[u])) + n_kept_desc[u]
+            for u in g.nodes()}

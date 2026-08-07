@@ -91,6 +91,45 @@ Three robustness bugs surfaced by single-reach clusters, all fixed:
   with `route_src_reach=False`), which crashed the conv. It now returns the
   residual alone.
 
+### Added — route to a selected set of output reaches
+
+`RivTree(..., output_reach=[...])`, or `set_output_reach(...)` at any time later,
+restricts what the router returns. Paths that end at a reach nobody asked about
+are dropped from the closure **and** from the convolution kernel, whose row
+dimension becomes the number of selected reaches:
+
+```
+20000 reaches, 400 gauges
+  paths    6,670,319 ->   147,202   ( 45.3x)
+  blocks      39,313 ->     7,488   (  5.3x)
+  kernel  (20000, 20000) -> (400, 20000)
+  routing     32.57 ms ->     5.54 ms   (  5.9x)
+```
+
+Selection is **structural**, not a forward argument: it is resolved once against
+the existing `nodes_idx`, on the host, so nothing has to be looked up per call
+and no device-side index is needed. `set_output_reach(None)` restores full
+routing.
+
+What it deliberately does **not** touch: the graph, the node ordering, and the
+runoff tensor the router expects, which stays one row per node in graph order.
+`prefix_sum` and the IRF transform therefore still run over every node; narrowing
+those is a separate problem.
+
+- `downstream_path_stats` takes an optional `keep`, so the counts — and hence the
+  write offsets — follow the selection.
+- the closure kernel reads `out_row`: the destination's row in the output, or -1
+  to drop it. One tensor is both the predicate and the remap, so the emitted
+  kernel is `(n_out x n_in)` rather than `(n x n)` with holes.
+- the block-sparse convolution already supported a non-square kernel on its
+  default (triton) path — `conv_temp_1D.py` carries `C_out`/`C_in` and separate
+  `n_in_blocks`/`n_out_blocks` in both directions. Only the non-default legacy
+  torch fallback assumes square.
+
+Not supported on `RivTreeCluster`: a cluster's boundary node has to stay in its
+own cluster's output, since that value is what `node_transfer` hands downstream.
+It raises rather than silently dropping a transfer source.
+
 ### Changed — closure internals
 
 - `closure_sub(head, tail, edges, path_cumsum, ...)` now takes two prefix

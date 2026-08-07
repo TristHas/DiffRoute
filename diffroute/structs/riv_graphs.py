@@ -8,7 +8,7 @@ from typing import Dict, List, Tuple
 from tqdm.auto import tqdm
 
 from ..irfs import IRF_PARAMS
-from .utils import init_pre_indices
+from .utils import init_pre_indices, downstream_path_stats
 
 def check_route_src_reach(route_src_reach):
     """Validate a uniform ``route_src_reach`` or a per-node mapping of them."""
@@ -39,7 +39,8 @@ class RivTree(nn.Module):
                  param_df=None,
                  param_names=None,
                  nodes_idx=None,
-                 transition_nodes=None):
+                 transition_nodes=None,
+                 output_reach=None):
         """Initialize river network metadata and parameter buffers.
 
         Args:
@@ -63,8 +64,10 @@ class RivTree(nn.Module):
             nodes_idx (pd.Series | None): Precomputed node ordering.
             transition_nodes (Iterable | None): Nodes that carry an upstream
                 cluster's routed discharge rather than local runoff. They are
-                forced to outlet entry, and they emit no output of their own --
-                the cluster they came from already reported it.
+                forced to route_src_reach=False, and they emit no output of
+                their own -- the cluster they came from already reported it.
+            output_reach (Iterable | None): Nodes the router should return; see
+                ``set_output_reach``. ``None`` returns every node.
         """
         super().__init__()
         self.g = g
@@ -94,11 +97,67 @@ class RivTree(nn.Module):
         self.has_residual = bool((emit != 0).any())
 
         self.register_buffer("edges", edges)
-        self.register_buffer("path_cumsum", path_cumsum)
         self.register_buffer("own_reach", own_reach)
         self.register_buffer("residual_weight", emit.view(-1, 1))
+        self._full_path_cumsum = path_cumsum
+        self.set_output_reach(output_reach)
         if irf_fn is not None:
             self.init_params(param_df, param_names)
+
+    # ------------------------------------------------------------------
+    def set_output_reach(self, output_reach=None):
+        """Restrict which reaches the router returns.
+
+        Paths that end at a reach nobody asked for are dropped from the closure
+        AND from the convolution kernel, whose row dimension becomes
+        ``len(output_reach)`` instead of the number of nodes. With a handful of
+        gauges on a large network that is most of the work.
+
+        What it does NOT change: the graph, the node ordering, and the runoff
+        tensor the router expects, which stays one row per node in graph order.
+        ``prefix_sum`` and the IRF transform therefore still run over every node;
+        narrowing those is a separate problem.
+
+        Args:
+            output_reach: node labels to return, in the order wanted, or ``None``
+                to return every node in graph order. Callable at any time.
+        """
+        n = len(self.nodes_idx)
+        device = self.edges.device
+        if output_reach is None:
+            self.output_reach = None
+            self.n_out = n
+            self.full_output = True
+            out_row = torch.arange(n, dtype=torch.int32)
+            out_positions = torch.arange(n, dtype=torch.long)
+            path_cumsum = self._full_path_cumsum
+        else:
+            labels = list(output_reach)
+            if len(set(labels)) != len(labels):
+                raise ValueError("output_reach contains duplicate nodes")
+            # structural, so the label lookup happens once here on the host --
+            # no per-call lookup, hence no device-side index needed
+            positions = self.nodes_idx.loc[labels].to_numpy(dtype=np.int64)
+            self.output_reach = labels
+            self.n_out = len(labels)
+            self.full_output = False
+            out_row = torch.full((n,), -1, dtype=torch.int32)
+            out_row[positions] = torch.arange(len(labels), dtype=torch.int32)
+            out_positions = torch.from_numpy(positions)
+
+            keep = dict(zip(self.nodes_idx.index, (out_row >= 0).numpy()))
+            flags = dict(zip(self.nodes_idx.index, self.own_reach.cpu().numpy()))
+            counts = downstream_path_stats(self.g, flags, keep)
+            counts = np.fromiter((counts[k] for k in self.nodes_idx.index), dtype=np.int32)
+            path_cumsum = torch.from_numpy(np.cumsum(counts)).int()
+
+        self.register_buffer("out_row", out_row.to(device))
+        self.register_buffer("out_positions", out_positions.to(device))
+        self.register_buffer("path_cumsum", path_cumsum.to(device))
+        self.register_buffer("residual_weight_out",
+                             self.residual_weight[out_positions.to(device)])
+        self.n_paths = int(path_cumsum[-1]) if len(path_cumsum) else 0
+        return self
 
     def init_params(self, param_df, param_names):
         """Load impulse response parameters from a graph or dataframe.
@@ -203,6 +262,22 @@ class RivTreeCluster(nn.Module):
             self.tot_transfer = 0
             self.src_transfer = BufferDict({})
             self.dst_transfer = BufferDict({})
+
+    def set_output_reach(self, output_reach=None):
+        """Not supported on a clustered graph yet.
+
+        A cluster's boundary node has to stay in its own cluster's output, since
+        that value is what `node_transfer` hands downstream. Selecting outputs
+        here therefore means keeping the requested nodes *plus* every transfer
+        source, then hiding the latter again on the way out -- worth doing, but
+        it is not the same bookkeeping as the single-graph case.
+        """
+        if output_reach is not None:
+            raise NotImplementedError(
+                "set_output_reach is not supported on RivTreeCluster: transfer "
+                "sources must stay in their cluster's output. Route the graph "
+                "unsplit, or open an issue if you need this.")
+        return self
 
     def __len__(self):
         return len(self.gs)

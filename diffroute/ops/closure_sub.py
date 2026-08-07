@@ -45,7 +45,7 @@ from torch.autograd import Function
 @triton.jit
 def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
                          head_ptr, tail_ptr,
-                         edges_ptr, cumsum_ptr, own_ptr,
+                         edges_ptr, cumsum_ptr, own_ptr, out_row_ptr,
                          n_nodes,
                          n_feat: tl.constexpr,
                          BLOCK_F: tl.constexpr):
@@ -62,20 +62,25 @@ def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
     offs = tl.arange(0, BLOCK_F)
 
     while dest != -1:
-        row = base + step
+        # `out_row` is the destination's row in the OUTPUT, or -1 when that node
+        # was not requested. It is both the predicate and the remap, so the
+        # emitted kernel is (n_out x n_in) rather than (n x n) with holes.
+        out_row = tl.load(out_row_ptr + dest)
+        if out_row >= 0:
+            row = base + step
 
-        tl.store(coords_ptr + row*2 + 0, dest)
-        tl.store(coords_ptr + row*2 + 1, pid)
+            tl.store(coords_ptr + row*2 + 0, out_row)
+            tl.store(coords_ptr + row*2 + 1, pid)
 
         # path-sum via prefix difference: head[pid] already excludes the source
         # reach under outlet entry, tail[dest] always excludes dest.
-        for b in range(0, n_feat, BLOCK_F):
-            m   = offs + b < n_feat
-            p_s = tl.load(head_ptr + pid  * n_feat + b + offs, mask=m, other=0.)
-            p_d = tl.load(tail_ptr + dest * n_feat + b + offs, mask=m, other=0.)
-            tl.store(vals_ptr + row*n_feat + b + offs, p_s - p_d, mask=m)
+            for b in range(0, n_feat, BLOCK_F):
+                m   = offs + b < n_feat
+                p_s = tl.load(head_ptr + pid  * n_feat + b + offs, mask=m, other=0.)
+                p_d = tl.load(tail_ptr + dest * n_feat + b + offs, mask=m, other=0.)
+                tl.store(vals_ptr + row*n_feat + b + offs, p_s - p_d, mask=m)
 
-        step += 1
+            step += 1
         dest  = tl.load(edges_ptr + dest)
 
 
@@ -105,6 +110,7 @@ def _closure_enum_fwd(head: torch.Tensor,
                       edges: torch.Tensor,
                       path_cumsum: torch.Tensor,
                       own_reach: torch.Tensor,
+                      out_row: torch.Tensor,
                       block_f: int = 128):
     """
     Triton forward: enumerate (dest,start) pairs & prefix differences.
@@ -114,6 +120,7 @@ def _closure_enum_fwd(head: torch.Tensor,
     edges       = edges.contiguous()
     path_cumsum = path_cumsum.contiguous()  # safe cast .to(torch.int32)
     own_reach   = own_reach.to(torch.int8).contiguous()
+    out_row     = out_row.to(torch.int32).contiguous()
 
     n, f   = head.shape
     N_path = int(path_cumsum[-1].item())
@@ -122,7 +129,8 @@ def _closure_enum_fwd(head: torch.Tensor,
 
     with torch.cuda.device(head.device):
         _coo_enum_sum_kernel[(n,)](coords, vals,
-                                   head, tail, edges, path_cumsum, own_reach,
+                                   head, tail, edges, path_cumsum,
+                                   own_reach, out_row,
                                    n, f,
                                    BLOCK_F=block_f)
     return coords, vals
@@ -158,10 +166,10 @@ def _closure_enum_bwd(g_vals: torch.Tensor,
 # ------------------------------------------------------------------
 class ClosureSub(Function):
     @staticmethod
-    def forward(ctx, head, tail, edges, path_cumsum, own_reach,
+    def forward(ctx, head, tail, edges, path_cumsum, own_reach, out_row,
                 block_f: int = 128):
         coords, vals = _closure_enum_fwd(head, tail, edges, path_cumsum,
-                                         own_reach, block_f)
+                                         own_reach, out_row, block_f)
         ctx.save_for_backward(coords)
         ctx.block_f  = block_f
         ctx.n_nodes  = head.shape[0]
@@ -171,14 +179,15 @@ class ClosureSub(Function):
     @staticmethod
     def backward(ctx, g_coords, g_vals):
         if g_vals is None:                       # no grad flows
-            return None, None, None, None, None, None
+            return None, None, None, None, None, None, None
         coords, = ctx.saved_tensors
         g_head, g_tail = _closure_enum_bwd(g_vals, coords, ctx.n_nodes,
                                            ctx.n_feat, ctx.block_f)
-        return g_head, g_tail, None, None, None, None
+        return g_head, g_tail, None, None, None, None, None
 
 
-def closure_sub(head, tail, edges, path_cumsum, own_reach, block_f: int = 128):
+def closure_sub(head, tail, edges, path_cumsum, own_reach, out_row,
+                block_f: int = 128):
     """Path sums ``val(d, s) = head[s] - tail[d]`` over the downstream closure.
 
     Args:
@@ -189,5 +198,8 @@ def closure_sub(head, tail, edges, path_cumsum, own_reach, block_f: int = 128):
         edges: ``edges[i] = succ(i)``, -1 at outlets.
         path_cumsum: per-node write offsets from ``downstream_path_stats``.
         own_reach: per-node bool; whether the diagonal ``(s, s)`` is emitted.
+        out_row: per-node int32; the destination's row in the output, or -1 to
+            drop every path ending there.
     """
-    return ClosureSub.apply(head, tail, edges, path_cumsum, own_reach, block_f)
+    return ClosureSub.apply(head, tail, edges, path_cumsum, own_reach, out_row,
+                            block_f)

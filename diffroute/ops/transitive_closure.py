@@ -59,20 +59,20 @@ def select_head(P, Q, own_reach):
     return torch.where(own_reach.unsqueeze(-1), P, Q)
 
 
-def transitive_closure(irf, edges, path_cumsum, own_reach, block_f=128):
+def transitive_closure(irf, edges, path_cumsum, own_reach, out_row, block_f=128):
     """Path sums over the downstream closure; see ``ops/closure_sub.py``."""
     P, Q       = downstream_prefixes(irf, edges, block_f)
     coords, v  = closure_sub(select_head(P, Q, own_reach), Q,
-                             edges, path_cumsum, own_reach, block_f)
+                             edges, path_cumsum, own_reach, out_row, block_f)
     return coords, v, P
 
 def log_transitive_closure(irfs_freq, edges, path_cumsum,
-                           *, own_reach, block_f=128):
+                           *, own_reach, out_row, block_f=128):
     """
 
     """
     log_irfs_freq = stable_log_flattened(irfs_freq)
     coords, log_irfs_freq_agg, log_irfs_freq_prefix = transitive_closure(
-        log_irfs_freq, edges, path_cumsum, own_reach, block_f=block_f)
+        log_irfs_freq, edges, path_cumsum, own_reach, out_row, block_f=block_f)
     irfs_freq_agg = exp_complex(log_irfs_freq_agg)
     return coords, irfs_freq_agg

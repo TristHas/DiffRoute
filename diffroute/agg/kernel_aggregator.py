@@ -11,6 +11,7 @@ def aggregate_irf(params, irf_fn,
                   dt, time_window,
                   cascade=1,
                   own_reach=None,
+                  out_row=None,
                   block_f=128):
     """
     """
@@ -24,6 +25,7 @@ def aggregate_irf(params, irf_fn,
     coords, irfs_freq_agg = log_transitive_closure(
         irfs_freq, edges, path_cumsum,
         own_reach=own_reach,
+        out_row=out_row,
         block_f=block_f
     )
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
@@ -65,11 +67,14 @@ class IRFAggregator(nn.Module):
                                           time_window=self.max_delay,
                                           cascade=self.cascade,
                                           own_reach=g.own_reach,
+                                          out_row=g.out_row,
                                           block_f=self.block_f)
 
         irfs_agg = torch.relu(irfs_agg)
         irfs_agg = self.sampler.phi_k(irfs_agg).flip(-1)
         irfs_agg /= irfs_agg.sum(-1, keepdims=True)
 
-        kernel_size = (len(g), len(g), irfs_agg.shape[-1])
+        # (n_out x n_in): restricting the output shrinks the kernel's row
+        # dimension, so the block-sparse conv carries fewer blocks too
+        kernel_size = (g.n_out, len(g), irfs_agg.shape[-1])
         return SparseKernel(coords, irfs_agg, kernel_size)
