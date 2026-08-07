@@ -188,3 +188,16 @@ def test_clusters_refuse_selection():
     with pytest.raises(NotImplementedError, match="transfer"):
         gs.set_output_reach([5])
     gs.set_output_reach(None)              # the no-op case still works
+
+
+def test_conv_to_returns_self():
+    """`.to()` must return the module whether or not a kernel was set at init.
+
+    The `return self` used to sit inside the `isinstance` branch, so the common
+    `BlockSparseCausalConv().to(dev)` silently evaluated to None. LTIRouter never
+    hit it because nn.Module.to recurses into children instead.
+    """
+    from diffroute.conv import BlockSparseCausalConv
+    assert BlockSparseCausalConv().to(DEVICE) is not None
+    conv = BlockSparseCausalConv()
+    assert conv.to(DEVICE) is conv

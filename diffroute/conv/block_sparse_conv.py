@@ -90,5 +90,7 @@ class BlockSparseCausalConv(nn.Module):
     def to(self, device, **kwargs):
         super().to(device, **kwargs)
         if isinstance(self.bs_kernel, BlockSparseKernel):
+            # the kernel is a plain attribute, not a submodule, so nn.Module.to
+            # does not reach it
             self.bs_kernel = self.bs_kernel.to(device)
-            return self
+        return self
