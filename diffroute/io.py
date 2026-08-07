@@ -74,11 +74,11 @@ def read_rapid_graph(vpu_root, plength_thr=None, node_thr=None, **rapid_kwargs):
         g = RivTreeCluster(clusters_g, 
                            node_transfer,
                            irf_fn="muskingum", 
-                           include_index_diag=True,
+                           route_src_reach=True,
                            param_df=params)
     else:
         g = RivTree(g, irf_fn="muskingum", 
-                    include_index_diag=True,
+                    route_src_reach=True,
                     param_df=params)
     return g
 
@@ -104,10 +104,10 @@ def read_multiple_rapid_graphs(vpu_roots, plength_thr=None, node_thr=None, **rap
         g = RivTreeCluster(clusters_g, 
                            node_transfer,
                            irf_fn="muskingum", 
-                           include_index_diag=True,
+                           route_src_reach=True,
                            param_df=params)
     else:
         g = RivTree(g, irf_fn="muskingum", 
-                    include_index_diag=True,
+                    route_src_reach=True,
                     param_df=params)
     return g

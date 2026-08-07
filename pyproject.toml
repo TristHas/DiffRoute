@@ -1,6 +1,6 @@
 [project]
 name = "diffroute"
-version = "0.1.0"
+version = "1.0.0.dev0"
 description = "Differentiable river routing in PyTorch"
 readme = "README.md"
 requires-python = ">=3.8"

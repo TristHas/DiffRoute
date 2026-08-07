@@ -12,8 +12,8 @@ from .utils import init_pre_indices
 
 class RivTree(nn.Module):
     """River network wrapper that stores IRF parameters per node."""
-    def __init__(self, g, irf_fn, 
-                 include_index_diag=True,
+    def __init__(self, g, irf_fn,
+                 route_src_reach=True,
                  param_df=None,
                  param_names=None,
                  nodes_idx=None):
@@ -22,7 +22,18 @@ class RivTree(nn.Module):
         Args:
             g (networkx.DiGraph): Directed river network graph.
             irf_fn (str | None): Name of the IRF parameterization to use.
-            include_index_diag (bool): Whether to keep self-loops in kernels.
+            route_src_reach (bool): Whether a node's runoff is routed through
+                that node's OWN reach.
+                True  (default) -- the runoff enters at the reach head, so
+                    ``K(d, s)`` convolves the IRFs over ``s..d`` and the diagonal
+                    ``K(s, s) = irf(s)`` is part of the kernel.
+                False -- the runoff is already at the reach outlet, which is what
+                    a catchment-outlet runoff model produces, so the source reach
+                    is skipped: ``K(d, s)`` convolves ``succ(s)..d`` and the
+                    diagonal is the identity, added by ``LTIRouter`` as
+                    ``y = x + Kx``.
+                Note the consequence for headwaters: with False their own reach
+                parameters are never used and carry no gradient.
             param_df (pd.DataFrame | None): Optional parameter table.
             param_name (Iterable | None): Optional parameter names.
             nodes_idx (pd.Series | None): Precomputed node ordering.
@@ -30,11 +41,11 @@ class RivTree(nn.Module):
         super().__init__()
         self.g = g
         self.nodes_idx = nodes_idx if nodes_idx is not None else init_node_idxs(g)
-        self.include_index_diag = include_index_diag
+        self.route_src_reach = bool(route_src_reach)
         self.irf_fn = irf_fn
-        
-        edges, path_cumsum, _ = init_pre_indices(g, self.nodes_idx, 
-                                                 include_self=include_index_diag)
+
+        edges, path_cumsum, _ = init_pre_indices(g, self.nodes_idx,
+                                                 route_src_reach=self.route_src_reach)
 
         self.register_buffer("edges", edges)
         self.register_buffer("path_cumsum", path_cumsum)
@@ -64,9 +75,9 @@ class RivTree(nn.Module):
 
 class RivTreeCluster(nn.Module):
     """Collection of river subgraphs with optional inter-cluster transfers."""
-    def __init__(self, clusters_g, node_transfer, 
-                 irf_fn=None, 
-                 include_index_diag=True,
+    def __init__(self, clusters_g, node_transfer,
+                 irf_fn=None,
+                 route_src_reach=True,
                  param_df=None,
                  param_names=None,
                  nodes_idx=None):
@@ -77,15 +88,20 @@ class RivTreeCluster(nn.Module):
             node_transfer (Dict[int, List[Tuple[int, int, int]]] | None):
                 Mapping describing inter-cluster transfers.
             irf_fn (str): Name of the IRF parameterization to use.
-            include_index_diag (bool): Whether kernels include self-loops.
+            route_src_reach (bool): See ``RivTree``. Note that
+                ``node_transfer`` injects an upstream
+                cluster's routed discharge as *runoff* at the receiving node, which
+                only reconstructs the unsplit network when that runoff traverses
+                the receiving reach -- i.e. only for ``route_src_reach=True``.
             param_df (pd.DataFrame | None): Optional parameter table.
             nodes_idx (Sequence[pd.Series] | None): Custom node orderings.
         """
         super().__init__()
         if nodes_idx is None: nodes_idx = [None]*len(clusters_g)
         self.irf_fn = irf_fn
+        self.route_src_reach = bool(route_src_reach)
         self.gs = nn.ModuleList([RivTree(g, irf_fn=irf_fn,
-                                         include_index_diag=include_index_diag,
+                                         route_src_reach=self.route_src_reach,
                                          param_df=param_df,
                                          param_names=param_names,
                                          nodes_idx=nodes_idx[i]) \

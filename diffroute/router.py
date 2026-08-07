@@ -69,6 +69,8 @@ class LTIRouter(nn.Module):
         kernel = kernel.to_block_sparse(self.block_size)
         # Stage 2: Convolution
         y = self.conv(x, kernel)
-        # Handle residual if needed
-        if not g.include_index_diag: y = x + y
+        # With route_src_reach=False the runoff is already at the reach outlet, so
+        # the kernel holds only strictly-downstream paths and the diagonal is the
+        # identity -- added here rather than carried in the sparse kernel.
+        if not g.route_src_reach: y = x + y
         return y.reshape(*lead, C, T)                     # restore leading dims

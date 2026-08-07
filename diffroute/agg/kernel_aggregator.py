@@ -10,7 +10,7 @@ def aggregate_irf(params, irf_fn,
                   edges, path_cumsum,
                   dt, time_window,
                   cascade=1,
-                  include_index_diag=True,
+                  route_src_reach=True,
                   block_f=128):
     """
     """
@@ -21,7 +21,7 @@ def aggregate_irf(params, irf_fn,
     irfs_freq = torch.fft.rfft(irfs, n=time_window_expanded, dim=-1)
     coords, irfs_freq_agg = log_transitive_closure(
         irfs_freq, edges, path_cumsum,
-        include_self=include_index_diag,
+        route_src_reach=route_src_reach,
         block_f=block_f
     )
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
@@ -62,7 +62,7 @@ class IRFAggregator(nn.Module):
                                           dt=self.dt,
                                           time_window=self.max_delay,
                                           cascade=self.cascade,
-                                          include_index_diag=g.include_index_diag,
+                                          route_src_reach=g.route_src_reach,
                                           block_f=self.block_f)
 
         irfs_agg = torch.relu(irfs_agg)

@@ -69,25 +69,40 @@ def ref_prefix_sum(irf, edges):
     return torch.stack(rows)
 
 
-def ref_closure_sub(prefix, edges, include_self):
-    """Enumerate path-differences via for-loops (matches kernel coord order)."""
+def ref_exclusive(prefix, edges, one=False):
+    """Exclusive downstream prefix: Q[i] = prefix[succ(i)], neutral at outlets.
+
+    ``one=True`` returns the multiplicative identity for the frequency-domain
+    reference (which divides instead of subtracting).
+    """
+    e = edges.tolist()
+    neutral = (lambda r: torch.ones_like(r)) if one else (lambda r: torch.zeros_like(r))
+    return [prefix[e[i]] if e[i] != -1 else neutral(prefix[i]) for i in range(len(e))]
+
+
+def ref_closure_sub(head, tail, edges, route_src_reach):
+    """Enumerate path-differences via for-loops (matches kernel coord order).
+
+    ``val(dest, start) = head[start] - tail[dest]`` where ``tail`` is the
+    EXCLUSIVE downstream prefix, so the destination needs no child lookup and the
+    source end excludes its own reach exactly when ``route_src_reach`` is false.
+    See ``diffroute/ops/closure_sub.py`` for the convention.
+    """
     e = edges.tolist()
     coords_list, vals_list = [], []
     for start in range(len(e)):
-        dest = start if include_self else e[start]
+        dest = start if route_src_reach else e[start]
         if dest == -1:
             continue
         while dest != -1:
-            child = e[dest]
-            val = prefix[start] - prefix[child] if child != -1 else prefix[start]
             coords_list.append([dest, start])
-            vals_list.append(val)
+            vals_list.append(head[start] - tail[dest])
             dest = e[dest]
-    coords = torch.tensor(coords_list, dtype=torch.long, device=prefix.device)
+    coords = torch.tensor(coords_list, dtype=torch.long, device=head.device)
     return coords, torch.stack(vals_list)
 
 
-def ref_aggregate_irf(params, irf_fn, edges, include_diag, dt, time_window):
+def ref_aggregate_irf(params, irf_fn, edges, route_src, dt, time_window):
     """
     Reference aggregation using standard PyTorch ops only.
 
@@ -110,14 +125,18 @@ def ref_aggregate_irf(params, irf_fn, edges, include_diag, dt, time_window):
             j = e[j]
         cum.append(p)
 
+    # exclusive product (everything strictly downstream); the source end uses it
+    # instead of ``cum`` when the reach's own IRF is not on the path
+    cum_ex = ref_exclusive(cum, edges, one=True)
+    head = cum if route_src else cum_ex
+
     coords_list, vals_list = [], []
     for start in range(n):
-        dest = start if include_diag else e[start]
+        dest = start if route_src else e[start]
         if dest == -1:
             continue
         while dest != -1:
-            child = e[dest]
-            path_freq = cum[start] / cum[child] if child != -1 else cum[start]
+            path_freq = head[start] / cum_ex[dest]
             coords_list.append([dest, start])
             vals_list.append(torch.fft.irfft(path_freq, n=K))
             dest = e[dest]
@@ -180,40 +199,72 @@ def test_prefix_sum_backward_fanin():
 # Group 2 – closure_sub backward
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _closure_sub_backward(include_diag):
+def _closure_sub_backward(route_src):
     torch.manual_seed(2)
     g = _chain_graph()
     nidx = init_node_idxs(g)
-    edges, path_cumsum, _ = init_pre_indices(g, nidx, include_self=include_diag)
+    edges, path_cumsum, _ = init_pre_indices(g, nidx, route_src_reach=route_src)
     edges = edges.to(DEVICE)
     path_cumsum = path_cumsum.to(DEVICE)
     n, f = len(nidx), 64
 
-    prefix_raw = torch.randn(n, f, device=DEVICE)
+    head_raw = torch.randn(n, f, device=DEVICE)
+    tail_raw = torch.randn(n, f, device=DEVICE)
 
-    prefix_t = prefix_raw.clone().requires_grad_(True)
-    _, vals_t = closure_sub(prefix_t, edges, path_cumsum, include_self=include_diag)
+    head_t = head_raw.clone().requires_grad_(True)
+    tail_t = tail_raw.clone().requires_grad_(True)
+    _, vals_t = closure_sub(head_t, tail_t, edges, path_cumsum,
+                            route_src_reach=route_src)
     target = torch.rand_like(vals_t)
     F.mse_loss(vals_t, target).backward()
-    grad_triton = prefix_t.grad.clone()
 
-    prefix_r = prefix_raw.clone().requires_grad_(True)
-    _, vals_r = ref_closure_sub(prefix_r, edges, include_diag)
+    head_r = head_raw.clone().requires_grad_(True)
+    tail_r = tail_raw.clone().requires_grad_(True)
+    _, vals_r = ref_closure_sub(head_r, tail_r, edges, route_src)
     F.mse_loss(vals_r, target).backward()
-    grad_ref = prefix_r.grad.clone()
 
-    err = (grad_triton - grad_ref).abs().max().item()
-    assert torch.allclose(grad_triton, grad_ref, rtol=1e-3, atol=1e-3), \
-        f"closure_sub backward (include_diag={include_diag}): max_err={err:.2e}"
+    for name, gt, gr in (("head", head_t.grad, head_r.grad),
+                         ("tail", tail_t.grad, tail_r.grad)):
+        err = (gt - gr).abs().max().item()
+        assert torch.allclose(gt, gr, rtol=1e-3, atol=1e-3), \
+            f"closure_sub backward {name} (route_src={route_src}): max_err={err:.2e}"
+
+
+def test_closure_sub_backward_shared_prefix():
+    """``transitive_closure`` passes the exclusive prefix as BOTH head and tail
+    when route_src_reach=False, so autograd has to accumulate the two contributions
+    into one leaf. Guards that the Function returns per-argument gradients."""
+    torch.manual_seed(4)
+    g = _chain_graph()
+    nidx = init_node_idxs(g)
+    edges, path_cumsum, _ = init_pre_indices(g, nidx, route_src_reach=False)
+    edges = edges.to(DEVICE)
+    path_cumsum = path_cumsum.to(DEVICE)
+    n, f = len(nidx), 64
+
+    raw = torch.randn(n, f, device=DEVICE)
+
+    p_t = raw.clone().requires_grad_(True)
+    _, vals_t = closure_sub(p_t, p_t, edges, path_cumsum, route_src_reach=False)
+    target = torch.rand_like(vals_t)
+    F.mse_loss(vals_t, target).backward()
+
+    p_r = raw.clone().requires_grad_(True)
+    _, vals_r = ref_closure_sub(p_r, p_r, edges, False)
+    F.mse_loss(vals_r, target).backward()
+
+    err = (p_t.grad - p_r.grad).abs().max().item()
+    assert torch.allclose(p_t.grad, p_r.grad, rtol=1e-3, atol=1e-3), \
+        f"closure_sub backward (shared prefix): max_err={err:.2e}"
 
 
 def test_closure_sub_backward_diag_true():
-    """Closure-sub backward correct with include_diag=True."""
+    """Closure-sub backward correct with route_src=True."""
     _closure_sub_backward(True)
 
 
 def test_closure_sub_backward_diag_false():
-    """Closure-sub backward correct with include_diag=False."""
+    """Closure-sub backward correct with route_src=False."""
     _closure_sub_backward(False)
 
 
@@ -221,11 +272,11 @@ def test_closure_sub_backward_diag_false():
 # Group 3 – full aggregation backward  (params → irfs_agg)
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _aggregate_irf_backward(include_diag):
+def _aggregate_irf_backward(route_src):
     torch.manual_seed(3)
     g = _chain_graph()
     nidx = init_node_idxs(g)
-    edges, path_cumsum, _ = init_pre_indices(g, nidx, include_self=include_diag)
+    edges, path_cumsum, _ = init_pre_indices(g, nidx, route_src_reach=route_src)
     edges = edges.to(DEVICE)
     path_cumsum = path_cumsum.to(DEVICE)
     dt, tw = 1.0, 30
@@ -234,13 +285,13 @@ def _aggregate_irf_backward(include_diag):
     params_t = params_raw.clone().requires_grad_(True)
     _, irfs_t = aggregate_irf(params_t, HAYAMI, edges, path_cumsum,
                               dt=dt, time_window=tw,
-                              include_index_diag=include_diag)
+                              route_src_reach=route_src)
     target = torch.rand_like(irfs_t)
     F.mse_loss(irfs_t, target).backward()
     grad_opt = params_t.grad.clone()
 
     params_r = params_raw.clone().requires_grad_(True)
-    _, irfs_r = ref_aggregate_irf(params_r, HAYAMI, edges, include_diag,
+    _, irfs_r = ref_aggregate_irf(params_r, HAYAMI, edges, route_src,
                                    dt=dt, time_window=tw)
     F.mse_loss(irfs_r, target).backward()
     grad_ref = params_r.grad.clone()
@@ -248,16 +299,16 @@ def _aggregate_irf_backward(include_diag):
     # Wider tolerance: optimized uses log-space (numerically distinct path)
     err = (grad_opt - grad_ref).abs().max().item()
     assert torch.allclose(grad_opt, grad_ref, rtol=5e-2, atol=5e-2), \
-        f"aggregate_irf backward (include_diag={include_diag}): max_err={err:.2e}"
+        f"aggregate_irf backward (route_src={route_src}): max_err={err:.2e}"
 
 
 def test_aggregate_irf_backward_diag_true():
-    """Aggregation backward correct with include_diag=True."""
+    """Aggregation backward correct with route_src=True."""
     _aggregate_irf_backward(True)
 
 
 def test_aggregate_irf_backward_diag_false():
-    """Aggregation backward correct with include_diag=False."""
+    """Aggregation backward correct with route_src=False."""
     _aggregate_irf_backward(False)
 
 
@@ -396,6 +447,7 @@ if __name__ == "__main__":
         "prefix_sum_fanin":         test_prefix_sum_backward_fanin,
         "closure_sub_diag_true":    test_closure_sub_backward_diag_true,
         "closure_sub_diag_false":   test_closure_sub_backward_diag_false,
+        "closure_sub_shared":       test_closure_sub_backward_shared_prefix,
         "aggregate_irf_diag_true":  test_aggregate_irf_backward_diag_true,
         "aggregate_irf_diag_false": test_aggregate_irf_backward_diag_false,
         "conv_diagonal":            test_conv_backward_diagonal,

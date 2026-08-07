@@ -5,7 +5,7 @@ import torch
 
 def init_pre_indices(g: nx.DiGraph,
                      node_idxs: pd.Series,
-                     include_self: bool = False):
+                     route_src_reach: bool = True):
     """
     Parameters
     ----------
@@ -13,8 +13,9 @@ def init_pre_indices(g: nx.DiGraph,
         Original graph whose nodes can be any hashable objects.
     node_idxs : pd.Series, optional
         Mapping node_label → integer index.
-    include_self : bool, default False
-        Forwarded to `downstream_path_stats`.
+    route_src_reach : bool, default True
+        Whether a node's own reach is on the paths leaving it, i.e. whether the
+        diagonal (n, n) is emitted. Forwarded to `downstream_path_stats`.
 
     Returns
     -------
@@ -32,7 +33,7 @@ def init_pre_indices(g: nx.DiGraph,
     edges_np[src_idx] = dst_idx
     edges = torch.from_numpy(edges_np).int()
 
-    count_paths, sum_lengths = downstream_path_stats(g, include_self)
+    count_paths, sum_lengths = downstream_path_stats(g, route_src_reach)
     count_paths = np.fromiter((count_paths[n] for n in node_idxs.index), dtype=np.int32)
     sum_lengths = np.fromiter((sum_lengths[n] for n in node_idxs.index), dtype=np.int32)
     
@@ -41,11 +42,11 @@ def init_pre_indices(g: nx.DiGraph,
 
     return edges, path_cumsum, length_cumsum
 
-def downstream_path_stats(g, include_self=True):
+def downstream_path_stats(g, route_src_reach=True):
     """
     """
-    init = 1 if include_self else 0
-    update = 0 if include_self else 1
+    init = 1 if route_src_reach else 0
+    update = 0 if route_src_reach else 1
     count_paths = {node: init for node in g.nodes()}
     sum_lengths = {node: init for node in g.nodes()}
 
