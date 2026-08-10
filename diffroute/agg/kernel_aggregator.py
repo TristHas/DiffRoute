@@ -12,6 +12,7 @@ def aggregate_irf(params, irf_fn,
                   cascade=1,
                   own_reach=None,
                   out_row=None,
+                  instantaneous=None,
                   block_f=128):
     """
     """
@@ -26,6 +27,7 @@ def aggregate_irf(params, irf_fn,
         irfs_freq, edges, path_cumsum,
         own_reach=own_reach,
         out_row=out_row,
+        instantaneous=instantaneous,
         block_f=block_f
     )
     irfs_agg = torch.fft.irfft(irfs_freq_agg, n=time_window_expanded, dim=-1)
@@ -68,6 +70,7 @@ class IRFAggregator(nn.Module):
                                           cascade=self.cascade,
                                           own_reach=g.own_reach,
                                           out_row=g.out_row,
+                                          instantaneous=getattr(g, "instantaneous", None),
                                           block_f=self.block_f)
 
         irfs_agg = torch.relu(irfs_agg)

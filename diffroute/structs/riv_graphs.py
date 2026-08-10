@@ -40,7 +40,8 @@ class RivTree(nn.Module):
                  param_names=None,
                  nodes_idx=None,
                  transition_nodes=None,
-                 output_reach=None):
+                 output_reach=None,
+                 instantaneous=None):
         """Initialize river network metadata and parameter buffers.
 
         Args:
@@ -68,6 +69,15 @@ class RivTree(nn.Module):
                 their own -- the cluster they came from already reported it.
             output_reach (Iterable | None): Nodes the router should return; see
                 ``set_output_reach``. ``None`` returns every node.
+            instantaneous (Iterable | None): Nodes whose reach transmits with no
+                delay or attenuation, whatever their IRF parameters say. Their
+                IRF is replaced by a Dirac, so they are transparent on every
+                path through them and their parameters receive exactly zero
+                gradient. Meant for reaches too short to resolve -- a
+                single-pixel reach has no length to route over, yet a
+                diffusive IRF still spreads mass over hours because its width
+                is set by D/c^2 rather than by L, which silently forces the
+                celerity up.
         """
         super().__init__()
         self.g = g
@@ -95,6 +105,12 @@ class RivTree(nn.Module):
         self.uniform_src_reach = (True if bool(own_reach.all()) else
                                   False if not bool(own_reach.any()) else None)
         self.has_residual = bool((emit != 0).any())
+
+        inst = torch.zeros(len(labels), dtype=torch.bool)
+        if instantaneous is not None:
+            want = set(instantaneous)
+            inst = torch.tensor([n in want for n in labels])
+        self.register_buffer("instantaneous", inst)
 
         self.register_buffer("edges", edges)
         self.register_buffer("own_reach", own_reach)

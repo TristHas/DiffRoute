@@ -67,11 +67,22 @@ def transitive_closure(irf, edges, path_cumsum, own_reach, out_row, block_f=128)
     return coords, v, P
 
 def log_transitive_closure(irfs_freq, edges, path_cumsum,
-                           *, own_reach, out_row, block_f=128):
-    """
+                           *, own_reach, out_row, instantaneous=None,
+                           block_f=128):
+    """Path products of the per-reach frequency responses, in log space.
 
+    ``instantaneous`` marks reaches that transmit unchanged. Convolution with a
+    Dirac is the identity, which in log-frequency space is simply zero, so the
+    mask is applied here rather than in the IRF: every path product then skips
+    the reach, and because the parameters no longer enter the graph the
+    gradient they receive is exactly zero -- the same treatment an untraversed
+    reach already gets under ``route_src_reach=False``.
     """
     log_irfs_freq = stable_log_flattened(irfs_freq)
+    if instantaneous is not None and bool(instantaneous.any()):
+        log_irfs_freq = torch.where(instantaneous.unsqueeze(-1),
+                                    torch.zeros_like(log_irfs_freq),
+                                    log_irfs_freq)
     coords, log_irfs_freq_agg, log_irfs_freq_prefix = transitive_closure(
         log_irfs_freq, edges, path_cumsum, own_reach, out_row, block_f=block_f)
     irfs_freq_agg = exp_complex(log_irfs_freq_agg)

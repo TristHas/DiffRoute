@@ -201,3 +201,60 @@ def test_enumeration(route_src):
     n_self = sum(1 for (d, s) in pairs if d == s)
     assert n_self == (len(e) if route_src else 0)
     assert len(pairs) == int(rt.path_cumsum[-1])
+
+
+# ------------------------------------------------- 5. instantaneous reaches
+@pytest.mark.parametrize("route_src", [True, False])
+def test_instantaneous_reach_is_transparent(route_src):
+    """A reach tagged instantaneous adds no delay on any path through it.
+
+    A single-pixel reach has no length to route over, but a diffusive IRF still
+    spreads mass over hours (its width is set by D/c^2, not by L), which forces
+    the learned celerity up to compensate. Tagging it removes the reach from
+    every path product instead.
+    """
+    delays = {0: 1, 1: 2, 2: 4}
+    rt, pos, router = _tree(chain(3), delays, route_src)
+    plain = _impulse_response(router, rt, pos, 0, 3)
+
+    pdf = pd.DataFrame({"delay": [float(delays[n]) for n in sorted(chain(3).nodes)]},
+                       index=sorted(chain(3).nodes))
+    rt_i = RivTree(chain(3), irf_fn="pure_lag", param_df=pdf,
+                   route_src_reach=route_src, param_names=["delay"],
+                   instantaneous=[1]).to(DEVICE)
+    tagged = _impulse_response(router, rt_i, pos, 0, 3)
+
+    want_plain = sum(delays[k] for k in _expected_nodes(chain(3), 0, 2, route_src))
+    want_tagged = want_plain - delays[1]
+    assert int(plain[pos[2]].cpu().numpy().argmax()) == want_plain
+    assert int(tagged[pos[2]].cpu().numpy().argmax()) == want_tagged, (
+        "tagging reach 1 should remove its delay from the 0->2 path")
+
+
+def test_instantaneous_reach_has_zero_gradient():
+    """Its parameters are out of the graph, so they cannot be learned."""
+    g, delays = chain(3), {0: 1.5, 1: 2.5, 2: 3.5}
+    pdf = pd.DataFrame({"delay": [delays[n] for n in sorted(g.nodes)]},
+                       index=sorted(g.nodes))
+    rt = RivTree(g, irf_fn="pure_lag", param_df=pdf, route_src_reach=False,
+                 param_names=["delay"], instantaneous=[1]).to(DEVICE)
+    pos = dict(zip(rt.nodes_idx.index.tolist(), rt.nodes_idx.values.tolist()))
+    router = LTIRouter(max_delay=TW, dt=1).to(DEVICE)
+    P = rt.params.detach().clone().requires_grad_(True)
+    torch.manual_seed(0)
+    router(torch.rand(1, 3, TW, device=DEVICE), rt, P)[0, pos[2]].sum().backward()
+    assert float(P.grad[pos[1], 0].abs()) == 0.0, "tagged reach still learns"
+    assert float(P.grad[pos[2], 0].abs()) > 0.0, "untagged interior reach went inert"
+
+
+def test_untagged_graph_is_unchanged():
+    """The mask must be inert when nothing is tagged."""
+    g, delays = random_tree(), {i: 1 + (i % 3) for i in range(12)}
+    a, pos, router = _tree(g, delays, False)
+    pdf = pd.DataFrame({"delay": [float(delays[n]) for n in sorted(g.nodes)]},
+                       index=sorted(g.nodes))
+    b = RivTree(g, irf_fn="pure_lag", param_df=pdf, route_src_reach=False,
+                param_names=["delay"], instantaneous=[]).to(DEVICE)
+    torch.manual_seed(0)
+    x = torch.rand(1, len(g), 4 * TW, device=DEVICE)
+    assert torch.equal(router(x, a, a.params), router(x, b, b.params))
