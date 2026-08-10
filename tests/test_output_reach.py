@@ -201,3 +201,46 @@ def test_conv_to_returns_self():
     assert BlockSparseCausalConv().to(DEVICE) is not None
     conv = BlockSparseCausalConv()
     assert conv.to(DEVICE) is conv
+
+
+@pytest.mark.parametrize("route_src_reach", [True, False])
+@pytest.mark.parametrize("graph", [chain(6), confluence(), tree(),
+                                   tree(24, seed=9)])
+def test_selection_gradients_match_full(graph, route_src_reach):
+    """Narrowing must not change gradients: d loss / d params through the
+    narrowed routing must equal the same loss on the full routing with the
+    rows selected afterwards.
+
+    Regression (2026-08): the forward stores the destination's remapped OUTPUT
+    row in ``coords[:, 0]``; the backward used that value as a *node* index,
+    scattering every path's tail gradient onto whichever nodes occupied rows
+    0..n_out-1. Forward tests cannot see it -- only this equivalence can.
+    """
+    rt = _rt(graph, route_src_reach)
+    router = LTIRouter(max_delay=TW, dt=1).to(DEVICE)
+    T = 3 * TW
+    torch.manual_seed(1)
+    x = torch.rand(1, len(rt), T, device=DEVICE)
+    labels = rt.nodes.tolist()
+    rng = np.random.default_rng(1)
+    sel = rng.choice(labels, size=max(2, len(labels) // 3),
+                     replace=False).tolist()
+    pos = [labels.index(n) for n in sel]
+    target = torch.rand(1, len(sel), T, device=DEVICE)
+
+    rt.set_output_reach(None)
+    P_full = rt.params.clone().requires_grad_(True)
+    y_full = router(x, rt, P_full)[:, pos]
+    ((y_full - target) ** 2).mean().backward()
+
+    rt.set_output_reach(sel)
+    P_sub = rt.params.clone().requires_grad_(True)
+    y_sub = router(x, rt, P_sub)
+    ((y_sub - target) ** 2).mean().backward()
+
+    assert torch.allclose(y_sub, y_full, rtol=1e-4, atol=1e-6), \
+        "narrowed forward diverged from full"
+    scale = float(P_full.grad.abs().max())
+    err = float((P_full.grad - P_sub.grad).abs().max()) / max(scale, 1e-9)
+    assert err < 1e-3, f"narrowed gradients diverge from full: rel {err:.3e}"
+    rt.set_output_reach(None)

@@ -85,14 +85,20 @@ def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
 
 
 @triton.jit
-def _vals_to_prefix_grad_kernel(coords_ptr, gvals_ptr,
+def _vals_to_prefix_grad_kernel(coords_ptr, out_pos_ptr, gvals_ptr,
                                 ghead_ptr, gtail_ptr,
                                 n_feat: tl.constexpr,
                                 BLOCK_F: tl.constexpr):
     row  = tl.program_id(0)
     offs = tl.arange(0, BLOCK_F)
 
-    dest  = tl.load(coords_ptr + row*2 + 0).to(tl.int32)
+    # coords[:, 0] is the destination's row in the OUTPUT (see the forward's
+    # out_row remap), not a node index -- map it back through out_positions
+    # before touching the per-node gradient buffer. With full output the map is
+    # the identity; with narrowing, skipping it scattered every path's tail
+    # gradient onto whatever nodes occupied rows 0..n_out-1.
+    dest_row = tl.load(coords_ptr + row*2 + 0).to(tl.int32)
+    dest  = tl.load(out_pos_ptr + dest_row).to(tl.int32)
     start = tl.load(coords_ptr + row*2 + 1).to(tl.int32)
 
     for base in range(0, n_feat, BLOCK_F):
@@ -138,11 +144,15 @@ def _closure_enum_fwd(head: torch.Tensor,
 
 def _closure_enum_bwd(g_vals: torch.Tensor,
                       coords: torch.Tensor,
+                      out_positions: torch.Tensor,
                       n_nodes: int,
                       n_feat: int,
                       block_f: int = 128):
     """
     Triton backward: accumulate dL/dvals -> (dL/dhead, dL/dtail).
+
+    ``out_positions`` maps an output row back to its node position, undoing the
+    forward's ``out_row`` remap of ``coords[:, 0]``.
 
     ``head`` and ``tail`` may be the same tensor (they are when every node uses
     outlet entry); autograd then sums the two returned buffers, which is exactly
@@ -150,13 +160,14 @@ def _closure_enum_bwd(g_vals: torch.Tensor,
     """
     g_vals = g_vals.contiguous()
     coords = coords.contiguous()
+    out_positions = out_positions.to(torch.int32).contiguous()
 
     g_head = torch.zeros((n_nodes, n_feat), dtype=g_vals.dtype, device=g_vals.device)
     g_tail = torch.zeros_like(g_head)
 
     with torch.cuda.device(g_vals.device):
         _vals_to_prefix_grad_kernel[(coords.shape[0],)](
-            coords, g_vals, g_head, g_tail,
+            coords, out_positions, g_vals, g_head, g_tail,
             n_feat=n_feat, BLOCK_F=block_f)
     return g_head, g_tail
 
@@ -170,7 +181,12 @@ class ClosureSub(Function):
                 block_f: int = 128):
         coords, vals = _closure_enum_fwd(head, tail, edges, path_cumsum,
                                          own_reach, out_row, block_f)
-        ctx.save_for_backward(coords)
+        # invert the node -> output-row remap for the backward pass; with full
+        # output this is the identity
+        pos = torch.nonzero(out_row >= 0, as_tuple=False).squeeze(1)
+        inv = torch.empty(pos.numel(), dtype=torch.long, device=out_row.device)
+        inv[out_row[pos].long()] = pos
+        ctx.save_for_backward(coords, inv)
         ctx.block_f  = block_f
         ctx.n_nodes  = head.shape[0]
         ctx.n_feat   = head.shape[1]
@@ -180,8 +196,8 @@ class ClosureSub(Function):
     def backward(ctx, g_coords, g_vals):
         if g_vals is None:                       # no grad flows
             return None, None, None, None, None, None, None
-        coords, = ctx.saved_tensors
-        g_head, g_tail = _closure_enum_bwd(g_vals, coords, ctx.n_nodes,
+        coords, inv = ctx.saved_tensors
+        g_head, g_tail = _closure_enum_bwd(g_vals, coords, inv, ctx.n_nodes,
                                            ctx.n_feat, ctx.block_f)
         return g_head, g_tail, None, None, None, None, None
 
