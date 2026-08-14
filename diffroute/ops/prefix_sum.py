@@ -68,9 +68,15 @@ def _gradprefix_jump_kernel(prev_ptr, next_ptr,
 # ------------------------------------------------------------------
 def _prefix_jump_fwd(irf: torch.Tensor,
                      edges: torch.Tensor,
-                     block_f: int = 128) -> torch.Tensor:
+                     block_f: int = 128,
+                     return_jumps: bool = False):
     """
     Fast inclusive prefix (node -> outlet) via pointer-jumping.
+
+    return_jumps: also return the per-round jump table each round actually
+        used (e_snap before that round's doubling). Backward replays these in
+        reverse instead of re-deriving them one graph edge at a time -- see
+        _prefix_jump_bwd_from_history.
     """
     irf   = irf.contiguous()
     edges = edges.contiguous()
@@ -81,6 +87,7 @@ def _prefix_jump_fwd(irf: torch.Tensor,
     # running jump table that gets contracted each round
     e_run  = edges.clone()
     e_snap = torch.empty_like(e_run)   # scratch snapshot
+    jump_history = [] if return_jumps else None
 
     rounds = math.ceil(math.log2(max(1, n)))
     grid   = (n,)
@@ -89,13 +96,15 @@ def _prefix_jump_fwd(irf: torch.Tensor,
             #print(buf0.device)
             # snapshot current jump table (so kernel reads stable values)
             e_snap.copy_(e_run)
+            if return_jumps:
+                jump_history.append(e_snap.clone())
             _prefix_jump_kernel[grid](buf0, buf1, e_run, e_snap,
                                       n, f, BLOCK_F=block_f)
             buf0, buf1 = buf1, buf0
             if (e_run < 0).all():
                 break
 
-    return buf0
+    return (buf0, jump_history) if return_jumps else buf0
 
 
 @triton.jit
@@ -136,86 +145,40 @@ def _prefix_bwd_push_kernel(
             )
 
 
-def _prefix_jump_bwd(g_prefix: torch.Tensor,
-                     edges: torch.Tensor,
-                     *,
-                     max_depth: int | None = None,
-                     block_f: int = 128,
-                     stream=None) -> torch.Tensor:
+def _prefix_jump_bwd_from_history(g_prefix: torch.Tensor,
+                                  jump_history: list[torch.Tensor],
+                                  block_f: int = 128) -> torch.Tensor:
     """
-    Parallel Triton implementation of prefix_sum_bwd_ref.
+    Backward via the forward's own pointer-jump rounds, replayed in reverse.
 
-    Parameters
-    ----------
-    g_prefix : [n, f] tensor (float32/float64)  -- upstream grads wrt prefix outputs.
-    edges    : [n] int32 tensor                 -- downstream pointer (-1 for outlet).
-    max_depth: optional int upper bound on max path length; if None, estimated.
-    block_f  : Triton tile size along feature dim. Tune for performance.
-    stream   : optional CUDA stream.
+    Each forward round computed ``V[i] += V[jump[i]]`` for that round's jump
+    table; backing that one round out is a scatter-add of the incoming
+    gradient to both ``i`` and ``jump[i]`` (`_prefix_bwd_push_kernel`, reused
+    unchanged from the single-hop driver this replaces -- it already treats
+    its third argument as "the jump table for this round", so a per-round
+    table works exactly like the single-hop `edges` did). Replaying every
+    round this way, latest round first, is exactly the len(jump_history)
+    rounds the forward pass needed (its own early exit already bounds this
+    to ceil(log2(max path length)), never one round per graph edge) --
+    O(depth) sequential rounds becomes O(log depth).
 
-    Returns
-    -------
-    g_irf : [n, f] tensor (same dtype/device) -- grads wrt original irfs.
+    g_prefix : [n, f] tensor -- upstream grads wrt prefix outputs.
+    jump_history : per-round jump tables from _prefix_jump_fwd(return_jumps=True).
     """
-    assert g_prefix.ndim == 2, "g_prefix must be [n, f]"
-    assert edges.ndim == 1, "edges must be [n]"
     n, f = g_prefix.shape
-    assert edges.shape[0] == n, "edges length mismatch"
-    assert edges.dtype in (torch.int32, torch.int64)
-    if edges.dtype != torch.int32:
-        edges = edges.to(torch.int32)
+    cur = g_prefix.contiguous()
+    block_f = min(block_f, triton.next_power_of_2(f))
+    grid = (n,)
 
-    device = g_prefix.device
-    dtype = g_prefix.dtype
-    # working buffers
-    g_irf = g_prefix.clone()          # start with self-contribution
-    cur   = g_prefix.clone()          # mass to push this round
-    next_ = torch.zeros_like(g_prefix)
-
-    # crude (safe) max_depth estimate if not provided: chase once on CPU
-    if max_depth is None:
-        # NOTE: O(n * depth) worst case but done once and cheap for typical n.
-        e = edges.cpu().tolist()
-        md = 0
-        for i in range(n):
-            d = 0
-            j = i
-            while j != -1:
-                j = e[j]
-                d += 1
-            md = max(md, d)
-        max_depth = md
-
-    # grid
-    grid = lambda META: (triton.cdiv(n, 1),)
-
-    # push level by level
-    with torch.cuda.device(device):
-        for _ in range(max_depth):
-            # zero receive buffer
-            next_.zero_()
-    
+    with torch.cuda.device(g_prefix.device):
+        for jump in reversed(jump_history):
+            next_ = cur.clone()  # self-contribution: V_r[i] feeds V_{r+1}[i] directly
             _prefix_bwd_push_kernel[grid](
-                cur,
-                next_,
-                edges,
-                n,
-                n_feat=f,
-                BLOCK_F=min(block_f, triton.next_power_of_2(f)),
-                #stream=stream,
+                cur, next_, jump, n, n_feat=f, BLOCK_F=block_f,
             )
-    
-            # accumulate what arrived this round
-            g_irf += next_
-    
-            # stop early if nothing moved
-            if torch.count_nonzero(next_) == 0:
-                break
-    
-            # next round pushes newly arrived mass further downstream
-            cur, next_ = next_, cur  # swap buffers; we'll zero() the new next_ at top
+            cur = next_
 
-    return g_irf
+    return cur
 
 
 
@@ -225,21 +188,18 @@ def _prefix_jump_bwd(g_prefix: torch.Tensor,
 class PrefixSum(Function):
     @staticmethod
     def forward(ctx, irf, edges, block_f: int = 128):
-        prefix = _prefix_jump_fwd(irf, edges, block_f)
-        ctx.save_for_backward(edges)
+        prefix, jump_history = _prefix_jump_fwd(irf, edges, block_f, return_jumps=True)
+        # plain ctx attribute, not save_for_backward: these are internal
+        # round-by-round jump tables, not an input or output of this
+        # Function, so they don't need autograd's input/output version
+        # tracking -- save_for_backward is for tensors that are.
+        ctx.jump_history = jump_history
         ctx.block_f = block_f
         return prefix
 
     @staticmethod
     def backward(ctx, g_prefix):
-        edges, = ctx.saved_tensors
-        block_f = ctx.block_f
-        # max_depth=n is a trivially safe bound (no path exceeds n hops) that
-        # skips _prefix_jump_bwd's default O(n . depth) CPU chase over `edges`
-        # to estimate it; the round loop already breaks early once no more
-        # gradient mass moves, so this changes no iteration actually run.
-        g_irf = _prefix_jump_bwd(g_prefix, edges, max_depth=edges.shape[0]) #, block_f)
-        #g_irf = prefix_sum_bwd_ref(g_prefix, edges)
+        g_irf = _prefix_jump_bwd_from_history(g_prefix, ctx.jump_history, ctx.block_f)
         return g_irf, None, None
 
 
