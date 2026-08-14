@@ -251,6 +251,14 @@ class RivTreeCluster(nn.Module):
                                          transition_nodes=transition_nodes.get(i)) \
                                  for i,g in enumerate(tqdm(clusters_g))])
         self.node_transfer = node_transfer
+        # A real buffer, not a property recomputed from the sub-trees: `route_all_clusters`
+        # reads this ONE tensor (sliced per cluster via node_ranges), so an in-place edit
+        # here -- e.g. rescaling a parameter across every cluster at once -- is what
+        # actually gets routed. A property that re-concatenates the sub-trees' OWN
+        # buffers on every access would silently discard such an edit, since it operates
+        # on a fresh torch.cat() temporary rather than on anything routing reads.
+        if irf_fn is not None:
+            self.register_buffer("params", torch.cat([g.params for g in self.gs]))
         all_nodes = np.concatenate([g.nodes_idx.index.values for g in self.gs])
         self.nodes_idx = pd.Series(np.arange(len(all_nodes)),
                                    index=all_nodes)
@@ -318,10 +326,6 @@ class RivTreeCluster(nn.Module):
     def internal_nodes(self):
         """Every row of the internal layout, transition copies included."""
         return self.nodes_idx.index.values
-
-    @property
-    def params(self):
-        return torch.cat([g.params for g in self.gs])
 
 def init_node_idxs(g):
     """Derive a depth-first traversal ordering for nodes in the graph.

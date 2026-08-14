@@ -162,3 +162,93 @@ def test_transition_node_carries_outlet_entry():
     assert bool(down.own_reach.sum()) > 0, "the rest of the cluster lost route_src_reach"
     assert float(down.residual_weight[pos]) == 0.0, "transition node re-emits its input"
     assert not down.uniform, "cluster should be mixed"
+
+
+# --------------------------------------------------------- Task D, Bug 2
+# ``RivTreeCluster.params`` used to be a property re-concatenating the
+# sub-trees' own buffers on every access. Routing reads ``gs.params`` ONCE
+# (route_all_clusters slices it per cluster via node_ranges), so that was
+# fine for params built directly from a param_df -- but an in-place edit
+# AFTER construction (e.g. scaling k from days to hours, the standard way
+# to switch a graph to hourly resolution) landed on nothing routing ever
+# read: the property recomputed a fresh torch.cat() on the NEXT access,
+# discarding the edit. VPU 209 hourly clustered routed with k still in
+# days as a result (0.977 median NSE vs 0.99977 flat, error accumulating
+# downstream -- the signature this test's tolerance is chosen to catch).
+def test_in_place_param_edit_is_routed():
+    """The exact failure mode: mutate gs.params in place, then route --
+    must match a graph built directly from the already-scaled params."""
+    g = chain(8)
+    clusters, transfer, transition, nidx = _split(g, (3, 4))
+    pdf = _params(g)
+    gs = RivTreeCluster(clusters, transfer, irf_fn="hayami", param_df=pdf,
+                        route_src_reach=True, param_names=["L", "D", "c"],
+                        nodes_idx=nidx, transition_nodes=transition).to(DEVICE)
+
+    before = gs.params.clone()
+    gs.params[:, 2] *= 3.0                      # celerity, in place -- as k *= 24 does
+    assert torch.equal(gs.params[:, 2], before[:, 2] * 3.0), (
+        "in-place edit did not persist on gs.params -- params is still a "
+        "snapshot/property rather than the buffer routing reads")
+
+    staged = LTIStagedRouter(max_delay=TW, dt=1).to(DEVICE)
+    x = torch.rand(1, len(gs.nodes), 4 * TW, device=DEVICE)
+    y_scaled = staged(x, gs, gs.params)[0]
+
+    pdf_scaled = pdf.copy()
+    pdf_scaled["c"] *= 3.0
+    gs_ref = RivTreeCluster(clusters, transfer, irf_fn="hayami", param_df=pdf_scaled,
+                            route_src_reach=True, param_names=["L", "D", "c"],
+                            nodes_idx=nidx, transition_nodes=transition).to(DEVICE)
+    y_ref = staged(x, gs_ref, gs_ref.params)[0]
+
+    # gs and gs_ref are separate instances -> separate closure/conv kernel
+    # launches, whose atomic-add accumulation order is not guaranteed
+    # identical (see the run-to-run noise floor documented across
+    # camels_tdx/scripts/d_certify_bitwise.py); a relative tolerance is the
+    # right bar, not torch.equal -- the point of this test is that the
+    # PARAMETERS were used at all, not bit-for-bit reproducibility.
+    err = (y_scaled - y_ref).abs().max().item()
+    scale = y_ref.abs().max().item()
+    assert err <= 1e-3 * max(scale, 1e-6), (
+        f"routing did not use the in-place-edited params (Bug 2: stale "
+        f"RivTreeCluster.params): diff {err:.3e} vs signal {scale:.3e}")
+
+
+def test_clustered_hourly_muskingum_matches_unsplit():
+    """The crashes README's own Bug 2 discriminator: a two-cluster toy
+    chain at hourly settings (Muskingum, k in HOURS, dt=1, matching the
+    real VPU 209 repro convention -- see camels_tdx
+    README_DIFFROUTE_CRASHES.md SS Bug 2), diffing clustered against the
+    unsplit graph directly rather than against an external reference.
+    """
+    n, cut = 300, (150, 151)
+    g = nx.DiGraph([(i, i + 1) for i in range(n - 1)])
+    rng = np.random.default_rng(0)
+    nodes = sorted(g.nodes)
+    pdf = pd.DataFrame({"x": rng.uniform(0.1, 0.4, n),
+                        "k": rng.uniform(0.5, 3.0, n)}, index=nodes)
+    TW_H = 32 * 24
+
+    rt = RivTree(g, irf_fn="muskingum", param_df=pdf, route_src_reach=True).to(DEVICE)
+    router = LTIRouter(max_delay=TW_H, dt=1).to(DEVICE)
+    T = 4 * TW_H
+    x_ref = torch.rand(1, len(rt.nodes), T, device=DEVICE)
+    y_ref = router(x_ref, rt, rt.params)[0]
+    ref = dict(zip(rt.nodes.tolist(), y_ref))
+
+    clusters, transfer, transition, nidx = _split(g, cut)
+    gs = RivTreeCluster(clusters, transfer, irf_fn="muskingum", param_df=pdf,
+                        route_src_reach=True, param_names=["x", "k"],
+                        nodes_idx=nidx, transition_nodes=transition).to(DEVICE)
+    staged = LTIStagedRouter(max_delay=TW_H, dt=1).to(DEVICE)
+    order = gs.nodes.tolist()
+    x_cl = torch.stack([x_ref[0, int(rt.nodes_idx.loc[nd])] for nd in order]).unsqueeze(0)
+    y_cl = staged(x_cl, gs, gs.params)[0]
+
+    for i, nd in enumerate(order):
+        err = (y_cl[i] - ref[nd]).abs().max().item()
+        scale = ref[nd].abs().max().item()
+        assert err <= 1e-2 * max(scale, 1e-6), (
+            f"node {nd} differs between hourly clustered and unsplit routing "
+            f"by {err:.3e} (signal {scale:.3e})")
