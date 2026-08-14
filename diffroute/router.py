@@ -35,7 +35,7 @@ class LTIRouter(nn.Module):
                                         dt=dt, cascade=cascade, 
                                         sampling_mode=sampling_mode,
                                         block_f=block_f)
-        self.conv = BlockSparseCausalConv()
+        self.conv = BlockSparseCausalConv(block_size=block_size)
 
     def forward(self, runoff: torch.Tensor, g, params=None) -> torch.Tensor:
         """Compute routed discharge for a set of runoff inputs.
@@ -70,8 +70,8 @@ class LTIRouter(nn.Module):
             # Stage 1: Aggregate kernel -- (n_out x n_in), so restricting the
             # output shrinks the closure and the block count together
             kernel = self.aggregator(g, params).to(x.device)
-            kernel = kernel.to_block_sparse(self.block_size)
-            # Stage 2: Convolution
+            # Stage 2: Convolution -- block-sparse or frequency-domain,
+            # chosen automatically inside self.conv (see BlockSparseCausalConv)
             y = self.conv(x, kernel)
         else:
             # No path carries anything: a single reach with route_src_reach=False
