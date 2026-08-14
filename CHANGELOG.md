@@ -2,6 +2,98 @@
 
 ## 1.0.0 (v1 line, in progress)
 
+### Fixed — int32 address overflow in the closure and block-sparse conv Triton kernels
+
+Triton wraps int32 address arithmetic silently rather than trapping. Two
+products exceed 2^31 at hourly resolution (768 taps) that never did at daily
+(32 taps):
+
+- the conv kernels' weight-block offset, `nzb * (K * block_size**2)`, past
+  ~10,922 nonzero blocks — reachable by an ordinary scattered output
+  selection (a gauge set, an arbitrary batch), not just a pathological one.
+  Confirmed via a direct Triton wrap probe and by cross-checking a wrapping
+  batch (18,584 blocks) against the identical reaches requested in a row
+  order that stays under the threshold (5,469 blocks): pre-fix, the two
+  disagreed almost everywhere (>99% of entries, not just at the edges) —
+  this was silently producing wrong finite output as often as it crashed,
+  depending on where the wrapped (negative) offset happened to land.
+- the closure kernels' `row * n_feat`, once a build's path count times
+  feature count exceeds 2^31 (a full-output flat closure at hourly
+  resolution on a network of tens of thousands of reaches).
+
+Fix: widen the first large factor of each offset product to int64 before
+multiplying. Address arithmetic only — no value, dtype, or floating-point
+computation order changes, so every daily-resolution kernel shape (which
+never approaches either threshold) is unaffected bit for bit.
+
+### Added — frequency-domain convolution for large tap counts
+
+Fixing the overflow makes any block count safe, but not cheap:
+`BlockSparseKernel` pads the (dest, src) path set out to whole
+`block_size x block_size` tiles, which wastes space badly once the tap
+count K is large and the output selection is scattered rather than
+graph-local (2-4% fill is typical) — a few hundred MB of real kernel data
+can pad out to tens of GiB. `BlockSparseCausalConv` now dispatches to a new
+`ops.conv.freq_conv_coo` (FFT overlap-add directly on the COO kernel, no
+block quantization at all) once the projected block storage crosses a
+threshold (default 6 GiB), invisibly to the caller — `LTIRouter.forward`
+no longer calls `to_block_sparse` at all, it just hands the aggregated
+kernel to the conv module. The threshold is calibrated so every
+daily-resolution (K~32) kernel stays on the unchanged Triton path
+regardless of fill, by orders of magnitude of headroom.
+
+`freq_conv_coo`'s ops (rfft/index_select/complex-mul/index_add/irfft) are
+ordinary differentiable torch calls — gradients w.r.t. both the input and
+the kernel values come from autograd directly, no hand-written backward
+kernel to keep in sync with the forward.
+
+Effect on a real hourly, ~1,600-gauge-output routing forward+backward:
+35.3 GiB peak (int64 fix alone) -> 4.8 GiB (with the frequency dispatch). A
+4,096-output arbitrary batch that still OOM'd after the int64 fix alone
+(77.9 GiB forward, no room left for backward's same-sized buffer) now peaks
+at 18.4 GiB forward+backward combined.
+
+### Fixed — `RivTreeCluster.params` was a property, so in-place edits to it were silently discarded
+
+It was `torch.cat([g.params for g in self.gs])` — recomputed fresh from the
+sub-trees on *every* access. Routing reads `gs.params` once per forward and
+slices it per cluster, so that was fine for params built directly from a
+`param_df`, but an in-place edit after construction (the standard way to
+switch a graph's temporal resolution, e.g. `g.params[:, 1] *= 24` for k
+days -> hours) landed on nothing: the property's next read discarded it and
+rebuilt from the untouched sub-tree buffers. A clustered graph routed at
+hourly resolution this way silently used unscaled (daily-timescale)
+parameters — headwaters barely affected, error accumulating downstream
+with drainage area, exactly the observed signature.
+
+`params` is now a real buffer, concatenated once at construction, same as
+`RivTree`'s own `params` always were.
+
+### Added — `set_output_reach` on `RivTreeCluster`
+
+Previously refused (`NotImplementedError`) — see the "Not supported on
+`RivTreeCluster`" note under the output-reach entry below, which this
+supersedes.
+
+A cluster boundary's transfer source has to stay in *its* cluster's local
+output regardless of what the caller asked for globally, since that row is
+what `node_transfer` hands the downstream cluster as input. Per cluster,
+the local output is now (requested nodes that live in it) union (its own
+transfer sources whose downstream cluster is itself needed) — propagated
+backward through the cluster dependency graph in one reverse pass, since
+clusters are already given in forward-topological order. A cluster with
+nothing needed in it, directly or transitively, is skipped entirely: it
+never routes and never enters the transfer bucket.
+
+With `output_reach=None` this reduces to exactly the pre-existing
+computation (`out_gather` *is* `keep_pos`, `out_ranges` *is* `node_ranges`)
+on its own unchanged, most performance-sensitive code path; the new
+bookkeeping (including remapping `src_transfer`'s local index, which is a
+position in a cluster's own discharge tensor and so changes shape when
+narrowed — `dst_transfer` indexes the untouched input layout and needs no
+change) exists only on the branch that could not run before.
+
+
 Breaking. The v1 line changes the routing API; `main` (0.1.0) is unaffected and
 still reproduces results produced before it.
 
@@ -126,9 +218,9 @@ those is a separate problem.
   `n_in_blocks`/`n_out_blocks` in both directions. Only the non-default legacy
   torch fallback assumes square.
 
-Not supported on `RivTreeCluster`: a cluster's boundary node has to stay in its
-own cluster's output, since that value is what `node_transfer` hands downstream.
-It raises rather than silently dropping a transfer source.
+(Was not supported on `RivTreeCluster` at the time this entry was written --
+see "Added -- `set_output_reach` on `RivTreeCluster`" above, later in the v1
+line, for how the transfer-source problem this note describes was resolved.)
 
 ### Changed — closure internals
 
