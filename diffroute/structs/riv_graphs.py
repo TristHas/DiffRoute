@@ -11,18 +11,21 @@ from ..irfs import IRF_PARAMS
 from .utils import init_pre_indices, downstream_path_stats
 
 def check_route_src_reach(route_src_reach):
-    """Validate a uniform ``route_src_reach`` or a per-node mapping of them."""
+    """
+        Validate a uniform ``route_src_reach`` or a per-node mapping of them.
+    """
     if hasattr(route_src_reach, "items"):
         return {k: bool(v) for k, v in route_src_reach.items()}
     return bool(route_src_reach)
 
 
 def _src_reach_flags(route_src_reach, nodes, transition_nodes):
-    """Per-node "is this node's own reach on the paths leaving it" flags.
-
-    Transition nodes are forced to False whatever the global setting: the value
-    handed to them is an upstream cluster's routed discharge, which is by
-    construction already at that reach's outlet.
+    """
+        Per-node "is this node's own reach on the paths leaving it" flags.
+    
+        Transition nodes are forced to False whatever the global setting: the value
+        handed to them is an upstream cluster's routed discharge, which is by
+        construction already at that reach's outlet.
     """
     transition = set(transition_nodes or ())
     if isinstance(route_src_reach, bool):
@@ -33,7 +36,9 @@ def _src_reach_flags(route_src_reach, nodes, transition_nodes):
 
 
 class RivTree(nn.Module):
-    """River network wrapper that stores IRF parameters per node."""
+    """
+        River network wrapper that stores IRF parameters per node.
+    """
     def __init__(self, g, irf_fn,
                  route_src_reach=True,
                  param_df=None,
