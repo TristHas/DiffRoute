@@ -4,6 +4,7 @@ import torch
 import torch.nn as nn
 import networkx as nx
 
+from collections import defaultdict
 from typing import Dict, List, Tuple
 from tqdm.auto import tqdm
 
@@ -280,32 +281,175 @@ class RivTreeCluster(nn.Module):
         self.node_ranges = np.stack([starts, ends], axis=1)  # shape [M, 2]
         
         # Init node transfers
+        self._node_transfer = node_transfer or {}
         if node_transfer is not None:
-            src_map, dst_map, tot = build_transfer_tables(
+            # src_map is unused here: set_output_reach(None), called at the end
+            # of __init__, builds self.src_transfer itself (same construction
+            # narrowing later rebuilds), so there is no point building it twice.
+            _, dst_map, tot = build_transfer_tables(
                 node_transfer, dtype=torch.long
             )
             self.tot_transfer = tot
-            self.src_transfer = BufferDict(src_map)
             self.dst_transfer = BufferDict(dst_map)
+            # (src_cluster, dst_cluster, src_idx) -> global transfer id, in the
+            # SAME order build_transfer_tables assigned them (dict iteration is
+            # insertion-ordered) -- set_output_reach rebuilds src_transfer's
+            # LOCAL half when a cluster's output gets narrowed (that index is a
+            # position in the cluster's OWN discharge tensor, which narrowing
+            # changes), and needs this to keep reusing the SAME global ids
+            # dst_transfer already expects. dst_transfer itself indexes the
+            # (untouched) input runoff layout, so it needs no rebuilding.
+            gid = 0
+            self._transfer_gid = {}
+            for src_c, edges in node_transfer.items():
+                for dst_c, src_idx, _ in edges:
+                    self._transfer_gid[(src_c, dst_c, src_idx)] = gid
+                    gid += 1
         else:
             self.tot_transfer = 0
-            self.src_transfer = BufferDict({})
             self.dst_transfer = BufferDict({})
+            self._transfer_gid = {}
+        self.set_output_reach(None)
 
     def set_output_reach(self, output_reach=None):
-        """Not supported on a clustered graph yet.
+        """Restrict which reaches the router returns, on a clustered graph.
 
-        A cluster's boundary node has to stay in its own cluster's output, since
-        that value is what `node_transfer` hands downstream. Selecting outputs
-        here therefore means keeping the requested nodes *plus* every transfer
-        source, then hiding the latter again on the way out -- worth doing, but
-        it is not the same bookkeeping as the single-graph case.
+        A cluster boundary's transfer source has to stay in its cluster's
+        local output regardless of what the caller asked for -- that row is
+        what `node_transfer` hands to the next cluster as input, not
+        something routing can skip computing. So narrowing keeps, per
+        cluster, the requested nodes that live in it plus every transfer
+        source whose downstream cluster is itself needed -- either directly
+        requested, or itself feeding a needed cluster further downstream,
+        propagated backward through the cluster dependency graph in one
+        reverse pass (clusters are already given in forward-topological
+        order, so a single decreasing scan is enough). A cluster with
+        nothing needed in it, directly or transitively, is skipped
+        entirely: it never routes, and never enters the transfer bucket --
+        worth doing on its own, since a single downstream gauge should not
+        have to pay for unrelated upstream clusters.
+
+        ``None`` restores full output on every cluster (today's default,
+        and every existing call site's), through exactly the per-node
+        buffer gather (`keep_pos`) already used to drop transition rows --
+        this path is unchanged from before `set_output_reach` existed here.
+
+        Args:
+            output_reach: real node labels to return, in the order wanted
+                (never a transition copy -- those stay internal either
+                way), or ``None`` to return every real node.
         """
-        if output_reach is not None:
-            raise NotImplementedError(
-                "set_output_reach is not supported on RivTreeCluster: transfer "
-                "sources must stay in their cluster's output. Route the graph "
-                "unsplit, or open an issue if you need this.")
+        M = len(self.gs)
+        device = self.keep_pos.device
+
+        if output_reach is None:
+            for g in self.gs:
+                g.set_output_reach(None)
+            self.output_reach = None
+            self.n_out = len(self.nodes)
+            self.active = [True] * M
+            self.out_ranges = self.node_ranges
+            self.n_out_internal = len(self.nodes_idx)
+            self.register_buffer("out_gather", self.keep_pos)
+            # Full (unnarrowed) src_transfer: local index is each edge's src_idx
+            # as-is, reusing the ORIGINAL global ids. Rebuilt here rather than
+            # cached from __init__ so it always lands on the CURRENT device --
+            # a plain dict of tensors held outside the buffer system would go
+            # stale across a later .to(device), since nn.Module.to() only
+            # walks registered parameters/buffers/submodules.
+            src_map = {}
+            for src_c, edges in self._node_transfer.items():
+                local = [src_idx for _, src_idx, _ in edges]
+                gids = [self._transfer_gid[(src_c, dst_c, src_idx)] for dst_c, src_idx, _ in edges]
+                src_map[src_c] = torch.stack([
+                    torch.tensor(local, dtype=torch.long),
+                    torch.tensor(gids, dtype=torch.long)]).to(device)
+            self.src_transfer = BufferDict(src_map)
+            return self
+
+        labels = list(output_reach)
+        if len(set(labels)) != len(labels):
+            raise ValueError("output_reach contains duplicate nodes")
+
+        # Which cluster is each requested label's REAL (non-transition-copy)
+        # occurrence in, and where in the internal (node_ranges) layout.
+        out_pos = self.out_nodes_idx.loc[labels].to_numpy(dtype=np.int64)
+        internal_pos = self.keep_pos[out_pos].cpu().numpy()
+        cluster_of = np.searchsorted(self.node_ranges[:, 0], internal_pos, side="right") - 1
+
+        requested_by_cluster = defaultdict(list)
+        for lbl, cid in zip(labels, cluster_of.tolist()):
+            requested_by_cluster[cid].append(lbl)
+
+        predecessors = defaultdict(set)
+        for src_c, edges in self._node_transfer.items():
+            for dst_c, _, _ in edges:
+                predecessors[dst_c].add(src_c)
+        active = [cid in requested_by_cluster for cid in range(M)]
+        for cid in reversed(range(M)):
+            if active[cid]:
+                for p in predecessors.get(cid, ()):
+                    active[p] = True
+
+        # Per-cluster local output set: requested nodes in this cluster, plus
+        # this cluster's own transfer sources whose target is active.
+        per_cluster = {cid: list(dict.fromkeys(requested_by_cluster.get(cid, [])))
+                       for cid in range(M) if active[cid]}
+        for src_c, edges in self._node_transfer.items():
+            if not active[src_c]:
+                continue
+            for dst_c, src_idx, _ in edges:
+                if active[dst_c]:
+                    lbl = self.gs[src_c].nodes_idx.index[src_idx]
+                    if lbl not in per_cluster[src_c]:
+                        per_cluster[src_c].append(lbl)
+
+        narrowed_labels = []
+        starts_out = np.zeros(M, dtype=np.int64)
+        ends_out = np.zeros(M, dtype=np.int64)
+        pos = 0
+        for cid in range(M):
+            if not active[cid]:
+                self.gs[cid].set_output_reach([])
+                continue
+            self.gs[cid].set_output_reach(per_cluster[cid])
+            starts_out[cid] = pos
+            narrowed_labels.extend(per_cluster[cid])
+            pos += len(per_cluster[cid])
+            ends_out[cid] = pos
+
+        label_pos = {lbl: i for i, lbl in enumerate(narrowed_labels)}
+        out_gather = torch.tensor([label_pos[lbl] for lbl in labels],
+                                  dtype=torch.long, device=device)
+
+        # src_transfer's local index is a position in the cluster's OWN
+        # (now narrowed) discharge tensor -- rebuild it in the same pass,
+        # reusing the ORIGINAL global ids so dst_transfer (unchanged) still
+        # lines up.
+        src_map = {}
+        for src_c, edges in self._node_transfer.items():
+            if not active[src_c]:
+                continue
+            cluster_pos = {lbl: i for i, lbl in enumerate(per_cluster[src_c])}
+            local, gids = [], []
+            for dst_c, src_idx, _ in edges:
+                if not active[dst_c]:
+                    continue
+                lbl = self.gs[src_c].nodes_idx.index[src_idx]
+                local.append(cluster_pos[lbl])
+                gids.append(self._transfer_gid[(src_c, dst_c, src_idx)])
+            if local:
+                src_map[src_c] = torch.stack([
+                    torch.tensor(local, dtype=torch.long),
+                    torch.tensor(gids, dtype=torch.long)]).to(device)
+        self.src_transfer = BufferDict(src_map)
+
+        self.output_reach = labels
+        self.n_out = len(labels)
+        self.active = active
+        self.out_ranges = np.stack([starts_out, ends_out], axis=1)
+        self.n_out_internal = pos
+        self.register_buffer("out_gather", out_gather)
         return self
 
     def __len__(self):

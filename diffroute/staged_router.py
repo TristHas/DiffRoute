@@ -119,18 +119,22 @@ class LTIStagedRouter(nn.Module):
         if params is None: params = gs.params
         x = self._to_internal(x, gs)
         transfer_bucket = self._init_transfer_bucket(x, gs)
-        out = torch.empty(x.shape[0], len(gs.nodes_idx), x.shape[-1],
+        out = torch.empty(x.shape[0], gs.n_out_internal, x.shape[-1],
                           device=x.device, dtype=x.dtype)
 
-        start = 0
         for cid in range(len(gs)):
+            if not gs.active[cid]:
+                # Nothing needed lives in this cluster, directly or through a
+                # transfer -- set_output_reach's backward pass guarantees no
+                # active cluster is waiting on one of its outputs, so it is
+                # safe to skip routing it at all.
+                continue
             s, e = gs.node_ranges[cid]
             y_c, transfer_bucket = self.route_one_cluster(x[:,s:e], gs, cid,
                                                           params[s:e],
                                                           transfer_bucket)
-            end = start + y_c.shape[1]
-            out = write_slice(out, y_c, start, end)
-            start = end
+            os_, oe = gs.out_ranges[cid]
+            out = write_slice(out, y_c, os_, oe)
 
         return self._to_user(out, gs)
 
@@ -151,10 +155,17 @@ class LTIStagedRouter(nn.Module):
 
     @staticmethod
     def _to_user(out: torch.Tensor, gs) -> torch.Tensor:
-        """Drop transition rows, leaving one row per real node."""
-        if not gs.has_transitions:
-            return out
-        return out.index_select(1, gs.keep_pos)
+        """Drop transition rows, and remap to the requested order once narrowed.
+
+        With ``output_reach=None`` this is exactly the pre-narrowing behaviour
+        (identity, or the transition-dropping gather) -- ``out_gather`` equals
+        ``keep_pos`` in that case, but the untouched fast path avoids an
+        index_select on the default (largest, most performance-sensitive)
+        call shape.
+        """
+        if gs.output_reach is None:
+            return out if not gs.has_transitions else out.index_select(1, gs.keep_pos)
+        return out.index_select(1, gs.out_gather)
 
     def route_all_clusters_yield(self, xs: List[torch.Tensor], gs, 
                                  params: List[Any] | None = None):
