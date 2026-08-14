@@ -24,12 +24,19 @@ def _prefix_jump_kernel(prev_ptr, next_ptr,
                         edges_ptr, jump_ptr,
                         n_nodes, n_feat: tl.constexpr,
                         BLOCK_F: tl.constexpr):
-    pid = tl.program_id(0)
+    # widen before pid/dst * n_feat is computed below, or the product silently
+    # wraps at large n (Triton does not trap on int32 overflow) -- same fix as
+    # closure_sub.py's PATH-indexed offsets, here for NODE-indexed ones: this
+    # kernel's addressing was never widened, unlike that file's, so it wraps
+    # once n_nodes * n_feat exceeds 2**31 (e.g. n_feat=770 hourly taps, n
+    # beyond ~2.79M -- above today's largest single routed cluster, but not
+    # structurally bounded to stay there).
+    pid = tl.program_id(0).to(tl.int64)
     if pid >= n_nodes: return
-    dst   = tl.load(jump_ptr + pid)
+    dst   = tl.load(jump_ptr + pid).to(tl.int64)
     valid = dst >= 0
     offs  = tl.arange(0, BLOCK_F)
-    
+
     for base in range(0, n_feat, BLOCK_F):
         m   = offs + base < n_feat
         acc = tl.load(prev_ptr + pid * n_feat + base + offs, mask=m, other=0.)
@@ -116,12 +123,14 @@ def _prefix_bwd_push_kernel(
     n_feat: tl.constexpr,
     BLOCK_F: tl.constexpr,
 ):
-    pid = tl.program_id(0)
+    # see _prefix_jump_kernel's comment: widen before the *n_feat products
+    # below, or they silently wrap at large n.
+    pid = tl.program_id(0).to(tl.int64)
     if pid >= n_nodes:
         return
 
     # downstream node
-    dst = tl.load(edges_ptr + pid)
+    dst = tl.load(edges_ptr + pid).to(tl.int64)
     valid = dst >= 0
 
     offs = tl.arange(0, BLOCK_F)
