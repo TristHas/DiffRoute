@@ -234,7 +234,11 @@ class PrefixSum(Function):
     def backward(ctx, g_prefix):
         edges, = ctx.saved_tensors
         block_f = ctx.block_f
-        g_irf = _prefix_jump_bwd(g_prefix, edges) #, block_f)
+        # max_depth=n is a trivially safe bound (no path exceeds n hops) that
+        # skips _prefix_jump_bwd's default O(n . depth) CPU chase over `edges`
+        # to estimate it; the round loop already breaks early once no more
+        # gradient mass moves, so this changes no iteration actually run.
+        g_irf = _prefix_jump_bwd(g_prefix, edges, max_depth=edges.shape[0]) #, block_f)
         #g_irf = prefix_sum_bwd_ref(g_prefix, edges)
         return g_irf, None, None
 

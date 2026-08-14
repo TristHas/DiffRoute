@@ -67,7 +67,12 @@ def _coo_enum_sum_kernel(coords_ptr, vals_ptr,
         # emitted kernel is (n_out x n_in) rather than (n x n) with holes.
         out_row = tl.load(out_row_ptr + dest)
         if out_row >= 0:
-            row = base + step
+            # row indexes PATHS (up to path_cumsum[-1]), which for a large
+            # closure times n_feat exceeds int32 -- widen before the store
+            # offset is computed, or the product silently wraps (Triton does
+            # not trap on overflow). pid/dest index NODES, which stay well
+            # under 2^31 even at n_feat*n_nodes for the largest graphs routed.
+            row = (base + step).to(tl.int64)
 
             tl.store(coords_ptr + row*2 + 0, out_row)
             tl.store(coords_ptr + row*2 + 1, pid)
@@ -89,7 +94,7 @@ def _vals_to_prefix_grad_kernel(coords_ptr, out_pos_ptr, gvals_ptr,
                                 ghead_ptr, gtail_ptr,
                                 n_feat: tl.constexpr,
                                 BLOCK_F: tl.constexpr):
-    row  = tl.program_id(0)
+    row  = tl.program_id(0).to(tl.int64)  # indexes PATHS; see the forward's note
     offs = tl.arange(0, BLOCK_F)
 
     # coords[:, 0] is the destination's row in the OUTPUT (see the forward's

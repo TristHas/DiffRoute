@@ -155,7 +155,10 @@ class BlockSparseKernel(nn.Module):
         # Compute linear indices for flattening
         linear_indices = block_indices * (B * B) + block_local_coords[:,0] * B + block_local_coords[:,1]
         block_values = torch.zeros((n_blocks * B * B, ks), dtype=values.dtype, device=values.device)
-        block_values = block_values.index_put((linear_indices,), values)
+        # in-place: linear_indices are unique (coords has no duplicate (dest,src)
+        # rows), so there is nothing to accumulate, and this skips the clone
+        # index_put's out-of-place form would otherwise make of block_values
+        block_values.index_put_((linear_indices,), values)
         block_values = block_values.reshape(n_blocks, B, B, ks)
         
         # Compute the overall size of the tensor

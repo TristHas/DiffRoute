@@ -25,12 +25,16 @@ def block_sparse_conv_1d_fwd_kernel(
     b_idx    = tl.program_id(2)   # which batch
 
     # ------------------------------------------------------------
-    # Strides
+    # Strides -- int64: at hourly resolution T ~ 5e4 and thousands of
+    # blocks, block_count * n_time_steps * BLOCK_SIZE_M overflows int32
+    # (Triton wraps silently rather than trapping). One widened factor
+    # per product is enough; the rest promote through it.
     # ------------------------------------------------------------
-    in_batch_stride  = n_in_blocks  * n_time_steps * BLOCK_SIZE_M
-    out_batch_stride = n_out_blocks * n_time_steps * BLOCK_SIZE_M
-    in_block_stride  = n_time_steps * BLOCK_SIZE_M
-    out_block_stride = n_time_steps * BLOCK_SIZE_M
+    n_time_steps_64  = n_time_steps.to(tl.int64)
+    in_batch_stride  = n_in_blocks.to(tl.int64)  * n_time_steps_64 * BLOCK_SIZE_M
+    out_batch_stride = n_out_blocks.to(tl.int64) * n_time_steps_64 * BLOCK_SIZE_M
+    in_block_stride  = n_time_steps_64 * BLOCK_SIZE_M
+    out_block_stride = n_time_steps_64 * BLOCK_SIZE_M
 
     # Base pointers for this batch
     x_base = x_ptr + b_idx * in_batch_stride
@@ -65,9 +69,12 @@ def block_sparse_conv_1d_fwd_kernel(
             r_block = tl.load(coo_ptr + nzb * 2 + 0)  # output block
             c_block = tl.load(coo_ptr + nzb * 2 + 1)  # input  block
 
-            # Offsets
+            # Offsets. nzb runs over ALL nonzero blocks (tens of thousands at
+            # hourly tap counts): nzb * (K*M*M) is a fresh product that does
+            # not inherit int64-ness from the strides above, so it needs its
+            # own widened factor.
             x_block_off = c_block * in_block_stride
-            block_weight_base = nzb * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
+            block_weight_base = nzb.to(tl.int64) * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
 
             # Tile accumulator: FP32 accumulation
             tile_acc = tl.zeros((BLOCK_SIZE_M, BLOCK_SIZE_N), dtype=tl.float32)
@@ -156,11 +163,12 @@ def block_sparse_conv_1d_bwd_dx_kernel(
     tile_nzb = tl.program_id(0)
     b_idx    = tl.program_id(2)
 
-    # Strides
-    out_batch_stride = n_out_blocks * n_time_steps * BLOCK_SIZE_M
-    in_batch_stride  = n_in_blocks  * n_time_steps * BLOCK_SIZE_M
-    out_block_stride = n_time_steps * BLOCK_SIZE_M
-    in_block_stride  = n_time_steps * BLOCK_SIZE_M
+    # Strides -- int64, see block_sparse_conv_1d_fwd_kernel
+    n_time_steps_64  = n_time_steps.to(tl.int64)
+    out_batch_stride = n_out_blocks.to(tl.int64) * n_time_steps_64 * BLOCK_SIZE_M
+    in_batch_stride  = n_in_blocks.to(tl.int64)  * n_time_steps_64 * BLOCK_SIZE_M
+    out_block_stride = n_time_steps_64 * BLOCK_SIZE_M
+    in_block_stride  = n_time_steps_64 * BLOCK_SIZE_M
 
     dy_base = dy_ptr + b_idx * out_batch_stride
     dx_base = dx_ptr + b_idx * in_batch_stride
@@ -179,7 +187,7 @@ def block_sparse_conv_1d_bwd_dx_kernel(
 
             dy_block_ptr = dy_base + r_block * out_block_stride
             dx_block_ptr = dx_base + c_block * in_block_stride
-            weight_block_base = nzb * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
+            weight_block_base = nzb.to(tl.int64) * (KERNEL_SIZE * BLOCK_SIZE_M * BLOCK_SIZE_M)
 
             # masks for kernel load
             m_range = r_block * BLOCK_SIZE_M + tl.arange(0, BLOCK_SIZE_M)
@@ -237,10 +245,11 @@ def block_sparse_conv_1d_bwd_dvalues_kernel(
     t_range = n_tile * BLOCK_SIZE_N + tl.arange(0, BLOCK_SIZE_N)
     t_mask  = t_range < n_time_steps
 
-    in_batch_stride  = n_in_blocks  * n_time_steps * BLOCK_SIZE_M
-    out_batch_stride = n_out_blocks * n_time_steps * BLOCK_SIZE_M
-    in_block_stride  = n_time_steps * BLOCK_SIZE_M
-    out_block_stride = n_time_steps * BLOCK_SIZE_M
+    n_time_steps_64  = n_time_steps.to(tl.int64)
+    in_batch_stride  = n_in_blocks.to(tl.int64)  * n_time_steps_64 * BLOCK_SIZE_M
+    out_batch_stride = n_out_blocks.to(tl.int64) * n_time_steps_64 * BLOCK_SIZE_M
+    in_block_stride  = n_time_steps_64 * BLOCK_SIZE_M
+    out_block_stride = n_time_steps_64 * BLOCK_SIZE_M
 
     x_base  = x_ptr  + b_idx * in_batch_stride
     dy_base = dy_ptr + b_idx * out_batch_stride
@@ -278,6 +287,6 @@ def block_sparse_conv_1d_bwd_dvalues_kernel(
                 partial_dW = tl.dot(dy_tile, tl.trans(x_tile))
 
                 block_size = BLOCK_SIZE_M * BLOCK_SIZE_M
-                base = nzb * (KERNEL_SIZE * block_size) + k * block_size
+                base = nzb.to(tl.int64) * (KERNEL_SIZE * block_size) + k * block_size
                 w_idx = base + out_idx * BLOCK_SIZE_M + in_idx
                 tl.atomic_add(dvalues_ptr + w_idx, partial_dW)
