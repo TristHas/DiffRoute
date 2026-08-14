@@ -96,11 +96,16 @@ class BlockSparseCausalConv(nn.Module):
                "Kernel must be provided either at init or at forward"
         if isinstance(w, SparseKernel):
             _, _, K = w.size
-            n_blocks = torch.unique(w.coords // self.block_size, dim=0).shape[0]
+            # Computed once and reused below rather than paid for twice: this
+            # is the same torch.unique call to_block_sparse needs internally
+            # anyway, just hoisted so the size check ahead of it doesn't
+            # duplicate the work when it decides to proceed.
+            unique = BlockSparseKernel.unique_blocks(w.coords, self.block_size)
+            n_blocks = unique[0].shape[0]
             projected_bytes = n_blocks * self.block_size**2 * K * w.vals.element_size()
             if projected_bytes > self.freq_threshold_bytes:
                 return freq_conv_coo(x, w.coords, w.vals, w.size, chunk=self.freq_chunk)
-            w = w.to_block_sparse(self.block_size)
+            w = w.to_block_sparse(self.block_size, _unique=unique)
 
         BLOCK_SIZE_M = w.block_size if self.block_m is None else self.block_m
         BLOCK_SIZE_N = self.block_n

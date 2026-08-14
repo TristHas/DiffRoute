@@ -16,9 +16,16 @@ class SparseKernel(nn.Module):
         self.register_buffer("vals", vals)    # [n_blocks, block_size, block_size, ks]
         self.size = size
 
-    def to_block_sparse(self, block_size):
-        """Convert the kernel to a block-sparse representation."""
-        return BlockSparseKernel.from_sparse_kernel(self, block_size=block_size)
+    def to_block_sparse(self, block_size, _unique=None):
+        """Convert the kernel to a block-sparse representation.
+
+        Args:
+            _unique: optional precomputed ``(unique_blocks, block_indices)``
+                from :meth:`BlockSparseKernel.unique_blocks`, so a caller that
+                already needed the block count (e.g. to decide whether to
+                call this at all) doesn't pay for ``torch.unique`` twice.
+        """
+        return BlockSparseKernel.from_sparse_kernel(self, block_size=block_size, _unique=_unique)
 
     def to_dense(self):
         """Materialize the sparse kernel as a dense tensor."""
@@ -128,8 +135,23 @@ class BlockSparseKernel(nn.Module):
     
         return coords.long(), values
         
+    @staticmethod
+    def unique_blocks(coords, block_size):
+        """Which blocks are nonzero, and each coord row's block.
+
+        Returns:
+            Tuple[torch.Tensor, torch.Tensor]: ``(unique_blocks, block_indices)``
+            from ``torch.unique(coords // block_size, dim=0, return_inverse=True)``
+            -- exposed as its own step (rather than inlined in ``from_coo``) so a
+            caller that only needs the block *count* (e.g. to decide whether
+            block-sparse storage is worth building at all) can compute it once
+            and hand it to ``from_coo``/``to_block_sparse`` instead of paying
+            for the same ``torch.unique`` call twice.
+        """
+        return torch.unique(coords // block_size, dim=0, return_inverse=True)
+
     @classmethod
-    def from_coo(cls, coords, values, block_size, size=None, flip_values=False):
+    def from_coo(cls, coords, values, block_size, size=None, flip_values=False, _unique=None):
         """Construct a block-sparse kernel from COO inputs.
 
         Args:
@@ -138,6 +160,7 @@ class BlockSparseKernel(nn.Module):
             block_size (int): Spatial size of each block.
             size (Tuple[int, int, int] | None): Optional full tensor shape.
             flip_values (bool): Reverse kernel direction along the time axis.
+            _unique: optional precomputed ``unique_blocks(coords, block_size)``.
 
         Returns:
             BlockSparseKernel: Block-sparse representation built from inputs.
@@ -145,13 +168,13 @@ class BlockSparseKernel(nn.Module):
         values = values.flip(-1) if flip_values else values
         B = block_size
         ks = values.shape[-1]
-        
-        block_coords = coords // B  
+
         block_local_coords = coords % B
-        
-        unique_blocks, block_indices = torch.unique(block_coords, dim=0, return_inverse=True)
+
+        unique_blocks, block_indices = _unique if _unique is not None \
+                                       else cls.unique_blocks(coords, B)
         n_blocks = unique_blocks.size(0)
-        
+
         # Compute linear indices for flattening
         linear_indices = block_indices * (B * B) + block_local_coords[:,0] * B + block_local_coords[:,1]
         block_values = torch.zeros((n_blocks * B * B, ks), dtype=values.dtype, device=values.device)
@@ -160,7 +183,7 @@ class BlockSparseKernel(nn.Module):
         # index_put's out-of-place form would otherwise make of block_values
         block_values.index_put_((linear_indices,), values)
         block_values = block_values.reshape(n_blocks, B, B, ks)
-        
+
         # Compute the overall size of the tensor
         if size is None:
             max_coords = coords.max(dim=0)[0] + 1  # Add 1 because indices start from 0
@@ -169,11 +192,12 @@ class BlockSparseKernel(nn.Module):
         return cls(unique_blocks, block_values, block_size, size)
 
     @classmethod
-    def from_sparse_kernel(cls, kernel, block_size):
+    def from_sparse_kernel(cls, kernel, block_size, _unique=None):
         """Create a block-sparse kernel from a `SparseKernel` instance."""
-        return cls.from_coo(kernel.coords, kernel.vals, 
-                            block_size=block_size, 
-                            size=kernel.size)
+        return cls.from_coo(kernel.coords, kernel.vals,
+                            block_size=block_size,
+                            size=kernel.size,
+                            _unique=_unique)
     
     @classmethod
     def from_irfs(cls, irfs, block_size):
